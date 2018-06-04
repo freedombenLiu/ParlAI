@@ -11,8 +11,10 @@ import argparse
 import importlib
 import os
 import sys
+import datetime
 from parlai.core.agents import get_agent_module, get_task_module
 from parlai.tasks.tasks import ids_to_tasks
+from parlai.core.build_data import modelzoo_path
 
 
 def str2bool(value):
@@ -43,19 +45,6 @@ def class2str(value):
     s = s[s.find('\'') + 1:s.rfind('\'')]  # pull out import path
     s = ':'.join(s.rsplit('.', 1))  # replace last period with ':'
     return s
-
-
-def modelzoo_path(datapath, path):
-    """If path starts with 'models', then we remap it to the model zoo path
-    within the data directory (default is ParlAI/data/models).
-    ."""
-    if path is None:
-        return None
-    if not path.startswith('models:'):
-        return path
-    else:
-        return os.path.join(datapath, 'models', path[7:])
-
 
 class ParlaiParser(argparse.ArgumentParser):
     """Pseudo-extension of ``argparse`` which sets a number of parameters
@@ -325,7 +314,7 @@ class ParlaiParser(argparse.ArgumentParser):
 
     def add_extra_args(self, args=None):
         """Add more args depending on how known args are set."""
-        parsed = vars(self.parse_known_args(nohelp=True)[0])
+        parsed = vars(self.parse_known_args(args, nohelp=True)[0])
 
         # find which image mode specified if any, and add additional arguments
         image_mode = parsed.get('image_mode', None)
@@ -421,6 +410,9 @@ class ParlaiParser(argparse.ArgumentParser):
                         self.overridable[option_strings_dict[self.cli_args[i]]] = \
                             self.cli_args[i+1]
         self.opt['override'] = self.overridable
+
+        # add start time of an experiment
+        self.opt['starttime'] = datetime.datetime.today().strftime('%b%d_%H-%M')
 
         if print_args:
             self.print_args()

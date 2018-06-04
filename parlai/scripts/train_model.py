@@ -27,6 +27,7 @@ from parlai.core.agents import create_agent
 from parlai.core.worlds import create_task
 from parlai.core.params import ParlaiParser
 from parlai.core.utils import Timer
+from parlai.core.logs import TensorboardLogger
 from parlai.scripts.build_dict import build_dict, setup_args as setup_dict_args
 import math
 import os
@@ -81,6 +82,7 @@ def setup_args(parser=None):
     train.add_argument('-lfc', '--load-from-checkpoint',
                        type='bool', default=False,
                        help='load model from checkpoint if available')
+    TensorboardLogger.add_cmdline_args(parser)
     parser = setup_dict_args(parser)
     return parser
 
@@ -172,18 +174,30 @@ class TrainLoop():
         self.saved = False
         self.valid_world = None
         self.opt = opt
+        if opt['tensorboard_log'] is True:
+            self.writer = TensorboardLogger(opt)
 
     def validate(self):
         opt = self.opt
         valid_report, self.valid_world = run_eval(
             self.agent, opt, 'valid', opt['validation_max_exs'],
             valid_world=self.valid_world)
+        if opt['tensorboard_log'] is True:
+            self.writer.add_metrics('valid', int(math.floor(self.train_time.time())), valid_report)
         if opt.get('model_file') and opt.get('save_after_valid'):
             print("[ saving model checkpoint: " + opt['model_file'] + ".checkpoint ]")
             self.agent.save(opt['model_file'] + '.checkpoint')
         if hasattr(self.agent, 'receive_metrics'):
             self.agent.receive_metrics(valid_report)
-        new_valid = valid_report[opt['validation_metric']]
+        if '/' in opt['validation_metric']:
+            # if you are multitasking and want your validation metric to be
+            # a metric specific to a subtask, specify your validation metric
+            # as -vmt subtask/metric
+            subtask = opt['validation_metric'].split('/')[0]
+            validation_metric = opt['validation_metric'].split('/')[1]
+            new_valid = valid_report['tasks'][subtask][validation_metric]
+        else:
+            new_valid = valid_report[opt['validation_metric']]
         if self.best_valid is None or self.valid_optim * new_valid > self.valid_optim * self.best_valid:
             print('[ new best {}: {}{} ]'.format(
                 opt['validation_metric'], new_valid,
@@ -233,6 +247,9 @@ class TrainLoop():
         log = '[ {} ] {}'.format(' '.join(logs), train_report)
         print(log)
         self.log_time.reset()
+
+        if opt['tensorboard_log'] is True:
+            self.writer.add_metrics('train', int(logs[1].split(":")[1]), train_report)
 
     def train(self):
         opt = self.opt

@@ -19,7 +19,6 @@ from parlai.core.utils import Timer
 import random
 import os
 
-
 def setup_args(parser=None):
     if parser is None:
         parser = ParlaiParser(True, True)
@@ -56,7 +55,7 @@ def eval_model(opt, printargs=None, print_parser=None):
     # Create model and assign it to the specified task
     agent = create_agent(opt, requireModelExists=True)
     world = create_task(opt, agent)
-
+  
     if print_parser:
         # Show arguments after loading model
         print_parser.opt = agent.opt
