@@ -17,6 +17,7 @@ import random
 
 Batch = namedtuple("Batch", [
     "text_vec",  # bsz x seqlen tensor containing the parsed text data
+    "text_lengths", # bsz x 1 tensor containing the lengths of the text in same order as text_vec; necessary for pack_padded_sequence
     "label_vec", # bsz x seqlen tensor containing the parsed label (one per batch row)
     "labels", # list of length bsz containing the selected label for each batch row (some datasets have multiple labels per input example)
     "valid_indices",  # list of length bsz containing the original indices of each example in the batch. we use these to map predictions back to their proper row, since e.g. we may sort examples by their length or some examples may be invalid.
@@ -149,6 +150,7 @@ class TorchAgent(Agent):
             exs = [exs[k] for k in ind_sorted]
             valid_inds = [valid_inds[k] for k in ind_sorted]
             x_text = [x_text[k] for k in ind_sorted]
+            x_lens = [x_lens[k] for k in ind_sorted]
 
         padded_xs = torch.LongTensor(len(exs),
                                      max(x_lens)).fill_(self.NULL_IDX)
@@ -167,6 +169,7 @@ class TorchAgent(Agent):
         # set up the target tensors
         ys = None
         labels = None
+        y_lens = None
         if some_labels_avail:
             # randomly select one of the labels to update on (if multiple)
             if labels_avail:
@@ -193,7 +196,7 @@ class TorchAgent(Agent):
                     padded_ys[i, :y.shape[0]] = y
             ys = padded_ys
 
-        return Batch(xs, ys, labels, valid_inds)
+        return Batch(xs, torch.LongTensor(x_lens), ys, labels, valid_inds)
 
     def unmap_valid(self, predictions, valid_inds, batch_size):
         """Re-order permuted predictions to the initial ordering, includes the

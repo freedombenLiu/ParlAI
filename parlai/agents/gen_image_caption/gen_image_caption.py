@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 
 import torchvision.transforms as transforms
+from torch.nn.utils.rnn import pack_padded_sequence
 
 import math
 import os
@@ -126,11 +127,16 @@ class GenImageCaptionAgent(TorchAgent):
         batch_reply = [{'id': self.getID()} for _ in range(batch_size)]
 
         is_training = any(['labels' in obs for obs in observations])
+
+        for item in observations:
+            if is_training:
+                item['text'] = item['labels']
+            else:
+                item['text'] = item['eval_labels']
         vec_obs = [self.vectorize(obs)
                    for obs in observations]
 
-        _, ys, labels, valid_inds = self.map_valid(vec_obs)
-
+        xs, x_lens, _, labels, valid_inds = self.map_valid(vec_obs)
         # Prepare the images
         for ex in observations:
             ex['image'] = self.transform(ex['image'])
@@ -141,7 +147,7 @@ class GenImageCaptionAgent(TorchAgent):
         if self.use_cuda:
             images = images.cuda(async=True)
 
-        predictions, loss = self.predict(images, ys, is_training=is_training)
+        predictions, loss = self.predict(images, xs, x_lens, is_training=is_training)
 
         if loss is not None:
             batch_reply[0]['metrics'] = {'loss': loss.item()}
@@ -159,20 +165,20 @@ class GenImageCaptionAgent(TorchAgent):
                         output_tokens.append(token)
                 rep['text'] = self.dict.vec2txt(output_tokens)
         ran = random.random()
-        if (not is_training and ys is not None) or (is_training and ran < 0.01):
+        if (not is_training and xs is not None) or (is_training and ran < 0.01):
             pred_text = [o['text'] for o in batch_reply]
             for pred, label in list(zip(pred_text, labels))[:10]:
                 print("Predicted: {} \tActual: {}".format(pred, label))
 
         return batch_reply
 
-    def predict(self, xs, ys=None, is_training=False):
+    def predict(self, xs, ys=None, y_lens=None, is_training=False):
         loss = None
         longest_label = None if ys is None else ys.shape[1]
         if is_training:
             self.model.train()
             self.optimizer.zero_grad()
-            tokens, preds = self.model(longest_label, xs, ys)
+            tokens, preds = self.model(longest_label, xs, ys, y_lens)
             loss = self.criterion(preds.float(), ys)
             # save loss to metrics
             target_tokens = ys.ne(self.NULL_IDX).long().sum().item()

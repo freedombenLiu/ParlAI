@@ -239,7 +239,7 @@ class DefaultTeacher(FixedDialogTeacher):
 
     def get(self, episode_idx, entry_idx=0):
         action = {
-            'text': QUESTION,
+            'text': "",
             'episode_done': True
         }
 

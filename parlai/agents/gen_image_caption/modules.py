@@ -8,6 +8,8 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+
 
 class GenImageCaption(nn.Module):
     def __init__(self, opt, dict):
@@ -23,9 +25,9 @@ class GenImageCaption(nn.Module):
                                   max_seq_length=opt['max_pred_length'])
 
 
-    def forward(self, longest_label, images, captions=None):
+    def forward(self, longest_label, images, captions=None, caption_lens=None):
         features = self.encoder(images)
-        tokens, preds = self.decoder(features, captions, longest_label)
+        tokens, preds = self.decoder(features, captions, caption_lens, longest_label)
         return tokens, preds
 
     def get_optim(self):
@@ -65,34 +67,38 @@ class DecoderRNN(nn.Module):
         self.linear = nn.Linear(hidden_size, vocab_size)
         self.max_seg_length = max_seq_length
 
-    def forward(self, features, captions, longest_label):
+    def forward(self, features, captions, caption_lens, longest_label):
         """Decode image feature vectors and generates captions."""
-        states = None
-        sampled_preds = []
         inputs = features.unsqueeze(1)
         if captions is not None:
-            max_seg_length = longest_label
+            # Training
+            embeddings = self.embed(captions)
+            embeddings = torch.cat((inputs, embeddings), 1)
+            packed = pack_padded_sequence(embeddings, caption_lens, batch_first=True)
+            hiddens, _ = self.lstm(packed)
+            unpacked_outputs, _ = pad_packed_sequence(hiddens, batch_first=True)
+            outputs = self.linear(unpacked_outputs)
+            outputs = outputs.permute(0,2,1)
+            _, ids = outputs.max(1)
+            return ids, outputs
         else:
+            states = None
+            sampled_preds = []
             max_seg_length = self.max_seg_length if longest_label is None \
                                                  else longest_label
 
-        for i in range(max_seg_length):
-            # might need to send thru (0,0) instead of None
-            # print(i)
-            hidden, states = self.lstm(inputs, states)
-            outputs = self.linear(hidden.squeeze(1))    # outputs: (bsz, vocab_size)
-            _, predicted = outputs.max(1)                # predicted: (bsz)
-            sampled_preds.append(outputs)
+            for i in range(max_seg_length):
+                hidden, states = self.lstm(inputs, states)
+                outputs = self.linear(hidden.squeeze(1))    # outputs: (bsz, vocab_size)
+                _, predicted = outputs.max(1)                # predicted: (bsz)
+                sampled_preds.append(outputs)
 
-            if i < max_seg_length - 1:
-                states = states if captions is None else None
-                next_input = predicted if captions is None \
-                                       else captions[:,i] # no START token added to front, otherwise it's i+1
+                if i < max_seg_length - 1:
+                    inputs = self.embed(predicted)  # inputs: (batch_size, embed_size)
+                    inputs = inputs.unsqueeze(1)  # inputs: (batch_size, 1, embed_size)
 
-                inputs = self.embed(next_input)  # inputs: (batch_size, embed_size)
-                inputs = inputs.unsqueeze(1)  # inputs: (batch_size, 1, embed_size)
+            # sampled_ids: (batch_size, max_seg_length)
+            sampled_preds = torch.stack(sampled_preds, 2)
 
-        # sampled_ids: (batch_size, max_seg_length)
-        sampled_preds = torch.stack(sampled_preds, 2)
-        _, sampled_ids = sampled_preds.max(1)
-        return sampled_ids, sampled_preds
+            _, sampled_ids = sampled_preds.max(1)
+            return sampled_ids, sampled_preds
