@@ -71,7 +71,7 @@ def _path(opt, version):
 
 class DefaultDataset(Dataset):
     """A Pytorch Dataset utilizing streaming"""
-    def __init__(self, opt, version='2014'):
+    def __init__(self, opt, shared=None, version='2014'):
         self.opt = opt
         self.use_hdf5 = opt.get('use_hdf5', False)
         self.datatype = self.opt.get('datatype')
@@ -107,7 +107,7 @@ class DefaultDataset(Dataset):
             return ep
         if not self.datatype.startswith('test'):
             anno = self.annotation['annotations'][index]
-            ep['labels'] = [self.dict_agent.txt2vec(anno['caption'])]
+            ep['labels'] = [anno['caption']]
             ep['valid'] = True
         else:
             ep['valid'] = True
@@ -208,6 +208,7 @@ class DefaultTeacher(FixedDialogTeacher):
             if 'annotation' in shared:
                 self.annotation = shared['annotation']
             self.image_loader = shared['image_loader']
+            self.image_path = shared['image_path']
         else:
             # need to set up data from scratch
             test_info_path, annotation_path, self.image_path = _path(opt, version)
@@ -219,7 +220,6 @@ class DefaultTeacher(FixedDialogTeacher):
     def reset(self):
         super().reset()  # call parent reset so other fields can be set up
         self.example = None  # set up caching fields
-        self.next_example()  # call this once to get the cache moving
 
     def num_examples(self):
         # We only have annotations for the train and val sets, so for the test
@@ -234,6 +234,7 @@ class DefaultTeacher(FixedDialogTeacher):
 
     def submit_load_request(self, image_id):
         img_path = self.image_path + '%012d.jpg' % (image_id)
+
         self.data_loader.request_load(self.receive_data, self.image_loader.load, (img_path,))
 
     def get(self, episode_idx, entry_idx=0):
@@ -245,6 +246,7 @@ class DefaultTeacher(FixedDialogTeacher):
         if not self.datatype.startswith('test'):
             # test set annotations are not available for this dataset
             anno = self.annotation['annotations'][episode_idx]
+            # print(anno)
             action['labels'] = [anno['caption']]
             action['image_id'] = anno['image_id']
         else:
@@ -270,14 +272,19 @@ class DefaultTeacher(FixedDialogTeacher):
             # load the next image in the background
             image_id = self.example['image_id']
             self.submit_load_request(image_id)
-        # return the previously cached example
-        return ready
+
+        if ready is None:
+            return self.next_example()
+        else:
+            # return the previously cached example
+            return ready
 
     def share(self):
         shared = super().share()
         if hasattr(self, 'annotation'):
             shared['annotation'] = self.annotation
         shared['image_loader'] = self.image_loader
+        shared['image_path'] = self.image_path
         return shared
 
     def _setup_data(self, test_info_path, annotation_path):

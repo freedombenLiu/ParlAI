@@ -49,6 +49,8 @@ class TorchAgent(Agent):
                            help='Keep replies in the history, or not.')
         agent.add_argument('--no-cuda', action='store_true', default=False,
                            help='disable GPUs even if available')
+        agent.add_argument('--gpu', type=int, default=-1,
+                           help='which GPU device to use')
 
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)

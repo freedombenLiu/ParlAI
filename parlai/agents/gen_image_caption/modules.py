@@ -7,12 +7,13 @@
 import torch
 import torch.nn as nn
 import torchvision.models as models
-from torch.nn.utils.rnn import pack_padded_sequence
 
 
 class GenImageCaption(nn.Module):
     def __init__(self, opt, dict):
         super().__init__()
+        self.opt = opt
+        self.dict = dict
         vocab_size = len(dict.tok2ind)
         self.encoder = EncoderCNN(embed_size=opt['embed_size'])
         self.decoder = DecoderRNN(embed_size=opt['embed_size'],
@@ -21,10 +22,18 @@ class GenImageCaption(nn.Module):
                                   num_layers=opt['num_layers'],
                                   max_seq_length=opt['max_pred_length'])
 
-    def forward(self, images, captions=None, lengths=None):
+
+    def forward(self, longest_label, images, captions=None):
         features = self.encoder(images)
-        outputs = self.decoder(features, captions, lengths)
-        return outputs
+        tokens, preds = self.decoder(features, captions, longest_label)
+        return tokens, preds
+
+    def get_optim(self):
+        params = list(self.decoder.parameters()) + \
+                 list(self.encoder.linear.parameters()) + \
+                 list(self.encoder.bn.parameters())
+        optim = torch.optim.Adam(params, lr=self.opt['learning_rate'])
+        return optim
 
 
 class EncoderCNN(nn.Module):
@@ -51,29 +60,39 @@ class DecoderRNN(nn.Module):
         """Set the hyper-parameters and build the layers."""
         super(DecoderRNN, self).__init__()
         self.embed = nn.Embedding(vocab_size, embed_size)
-        self.lstm = nn.LSTM(embed_size, hidden_size, num_layers, batch_first=True)
+        self.lstm = nn.LSTM(embed_size, hidden_size,
+                            num_layers, batch_first=True)
         self.linear = nn.Linear(hidden_size, vocab_size)
         self.max_seg_length = max_seq_length
 
-    def forward(self, features, captions, lengths):
+    def forward(self, features, captions, longest_label):
         """Decode image feature vectors and generates captions."""
-        embeddings = self.embed(captions)
-        embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
-        packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
-        hiddens, _ = self.lstm(packed)
-        outputs = self.linear(hiddens[0])
-        return outputs
-
-    def sample(self, features, states=None):
-        """Generate captions for given image features using greedy search."""
-        sampled_ids = []
+        states = None
+        sampled_preds = []
         inputs = features.unsqueeze(1)
-        for i in range(self.max_seg_length):
-            hiddens, states = self.lstm(inputs, states)          # hiddens: (batch_size, 1, hidden_size)
-            outputs = self.linear(hiddens.squeeze(1))            # outputs:  (batch_size, vocab_size)
-            _, predicted = outputs.max(1)                        # predicted: (batch_size)
-            sampled_ids.append(predicted)
-            inputs = self.embed(predicted)                       # inputs: (batch_size, embed_size)
-            inputs = inputs.unsqueeze(1)                         # inputs: (batch_size, 1, embed_size)
-        sampled_ids = torch.stack(sampled_ids, 1)                # sampled_ids: (batch_size, max_seq_length)
-        return sampled_ids
+        if captions is not None:
+            max_seg_length = longest_label
+        else:
+            max_seg_length = self.max_seg_length if longest_label is None \
+                                                 else longest_label
+
+        for i in range(max_seg_length):
+            # might need to send thru (0,0) instead of None
+            # print(i)
+            hidden, states = self.lstm(inputs, states)
+            outputs = self.linear(hidden.squeeze(1))    # outputs: (bsz, vocab_size)
+            _, predicted = outputs.max(1)                # predicted: (bsz)
+            sampled_preds.append(outputs)
+
+            if i < max_seg_length - 1:
+                states = states if captions is None else None
+                next_input = predicted if captions is None \
+                                       else captions[:,i] # no START token added to front, otherwise it's i+1
+
+                inputs = self.embed(next_input)  # inputs: (batch_size, embed_size)
+                inputs = inputs.unsqueeze(1)  # inputs: (batch_size, 1, embed_size)
+
+        # sampled_ids: (batch_size, max_seg_length)
+        sampled_preds = torch.stack(sampled_preds, 2)
+        _, sampled_ids = sampled_preds.max(1)
+        return sampled_ids, sampled_preds
