@@ -88,9 +88,11 @@ class DecoderRNN(nn.Module):
                                                  else longest_label
 
             for i in range(max_seg_length):
+                # import pdb; pdb.set_trace()
                 hidden, states = self.lstm(inputs, states)
                 outputs = self.linear(hidden.squeeze(1))    # outputs: (bsz, vocab_size)
                 _, predicted = outputs.max(1)                # predicted: (bsz)
+                # print(predicted)
                 sampled_preds.append(outputs)
 
                 if i < max_seg_length - 1:

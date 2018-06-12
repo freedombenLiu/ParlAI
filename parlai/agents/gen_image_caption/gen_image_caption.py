@@ -130,9 +130,9 @@ class GenImageCaptionAgent(TorchAgent):
 
         for item in observations:
             if is_training:
-                item['text'] = item['labels']
+                item['text'] = item['labels'][0]
             else:
-                item['text'] = item['eval_labels']
+                item['text'] = item['eval_labels'][0]
         vec_obs = [self.vectorize(obs)
                    for obs in observations]
 
@@ -153,6 +153,7 @@ class GenImageCaptionAgent(TorchAgent):
             batch_reply[0]['metrics'] = {'loss': loss.item()}
 
         unmap_pred = self.unmap_valid(predictions, valid_inds, batch_size)
+        unmap_labels = self.unmap_valid(labels, valid_inds, batch_size)
         # Format the predictions into reply format
         for rep, pred in zip(batch_reply, unmap_pred):
             if pred is not None:
@@ -166,9 +167,10 @@ class GenImageCaptionAgent(TorchAgent):
                 rep['text'] = self.dict.vec2txt(output_tokens)
         ran = random.random()
         if (not is_training and xs is not None) or (is_training and ran < 0.01):
-            pred_text = [o['text'] for o in batch_reply]
-            for pred, label in list(zip(pred_text, labels))[:10]:
-                print("Predicted: {} \tActual: {}".format(pred, label))
+            pred_text = [o.get('text', None) for o in batch_reply]
+            for pred, label in list(zip(pred_text, unmap_labels))[:10]:
+                if label is not None:
+                    print("Predicted: {} \tActual: {}".format(pred, label))
 
         return batch_reply
 

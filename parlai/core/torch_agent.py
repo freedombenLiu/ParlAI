@@ -85,7 +85,7 @@ class TorchAgent(Agent):
         shared['dict'] = self.dict
         return shared
 
-    def vectorize(self, obs, addEndIdx=True):
+    def vectorize(self, obs, addStartIdx=True, addEndIdx=True):
         """
         Converts 'text' and 'label'/'eval_label' field to vectors.
 
@@ -109,6 +109,8 @@ class TorchAgent(Agent):
             new_labels = []
             for label in obs[label_type]:
                 vec_label = self.dict.txt2vec(label)
+                if addStartIdx:
+                    vec_label.insert(0, self.START_IDX)
                 if addEndIdx:
                     vec_label.append(self.END_IDX)
                 new_label = torch.LongTensor(vec_label)
