@@ -128,15 +128,24 @@ class GenImageCaptionAgent(TorchAgent):
 
         is_training = any(['labels' in obs for obs in observations])
 
-        for item in observations:
-            if is_training:
-                item['text'] = item['labels'][0]
-            else:
-                item['text'] = item['eval_labels'][0]
         vec_obs = [self.vectorize(obs)
                    for obs in observations]
 
+        # Need to copy over the labels and vectors into the text field so that
+        # map_valid will order the batch based on the captions, which are in
+        # the label field. We do this after vectorize so that the START_IDX and
+        # END_IDX are added to the captions and included in the packed tensor
+        # returned by map_valid.
+        for item in observations:
+            if is_training:
+                item['text'] = item['labels'][0]
+                item['text_vec'] = item['labels_vec'][0]
+            else:
+                item['text'] = item['eval_labels'][0]
+                item['text_vec'] = item['eval_labels_vec'][0]
+
         xs, x_lens, _, labels, valid_inds = self.map_valid(vec_obs)
+
         # Prepare the images
         for ex in observations:
             ex['image'] = self.transform(ex['image'])
@@ -168,7 +177,7 @@ class GenImageCaptionAgent(TorchAgent):
         ran = random.random()
         if (not is_training and xs is not None) or (is_training and ran < 0.01):
             pred_text = [o.get('text', None) for o in batch_reply]
-            for pred, label in list(zip(pred_text, unmap_labels))[:10]:
+            for pred, label in list(zip(pred_text, unmap_labels))[:5]:
                 if label is not None:
                     print("Predicted: {} \tActual: {}".format(pred, label))
 
