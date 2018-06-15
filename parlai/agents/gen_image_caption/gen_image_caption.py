@@ -43,6 +43,9 @@ class GenImageCaptionAgent(TorchAgent):
         agent.add_argument('-opt', '--optimizer', default='adam',
                            choices=['sgd', 'adam'],
                            help='Choose either sgd or adam as the optimizer.')
+        agent.add_argument('--use_feature_state', type='bool',
+                           default=True,
+                           help='Initialize LSTM state with image features')
         GenImageCaptionAgent.dictionary_class().add_cmdline_args(argparser)
 
     @staticmethod
@@ -155,7 +158,7 @@ class GenImageCaptionAgent(TorchAgent):
 
         is_training = any(['labels' in obs for obs in observations])
 
-        vec_obs = [self.vectorize(obs)
+        vec_obs = [self.vectorize(obs, addStartIdx=False)
                    for obs in observations]
 
         # Need to copy over the labels and vectors into the text field so that
@@ -222,8 +225,8 @@ class GenImageCaptionAgent(TorchAgent):
         if is_training:
             self.model.train()
             self.optimizer.zero_grad()
-            tokens, preds = self.model(longest_label, xs, ys, y_lens)
-            loss = self.criterion(preds.float(), ys)
+            tokens, scores = self.model(longest_label, xs, ys, y_lens)
+            loss = self.criterion(scores.float(), ys)
             # save loss to metrics
             target_tokens = ys.ne(self.NULL_IDX).long().sum().item()
             self.metrics['loss'] += loss.item()
@@ -234,9 +237,9 @@ class GenImageCaptionAgent(TorchAgent):
 
         else:
             self.model.eval()
-            tokens, preds = self.model(longest_label, xs, None)
+            tokens, scores = self.model(longest_label, xs, None)
             if ys is not None:
-                loss = self.criterion(preds.float(), ys)
+                loss = self.criterion(scores.float(), ys)
                 target_tokens = ys.ne(self.NULL_IDX).long().sum().item()
                 self.metrics['loss'] += loss.item()
                 self.metrics['num_tokens'] += target_tokens
