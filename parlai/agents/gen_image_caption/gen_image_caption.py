@@ -5,6 +5,7 @@
 # of patent rights can be found in the PATENTS file in the same directory.
 
 from parlai.core.torch_agent import TorchAgent
+from parlai.core.build_data import modelzoo_path
 from parlai.core.dict import DictionaryAgent
 from .modules import GenImageCaption
 from parlai.core.utils import round_sigfigs
@@ -39,6 +40,9 @@ class GenImageCaptionAgent(TorchAgent):
                            help='maximum length of predicted caption in eval mode')
         agent.add_argument('-lr', '--learning_rate', type=float, default=0.001,
                            help='learning rate')
+        agent.add_argument('-opt', '--optimizer', default='adam',
+                           choices=['sgd', 'adam'],
+                           help='Choose either sgd or adam as the optimizer.')
         GenImageCaptionAgent.dictionary_class().add_cmdline_args(argparser)
 
     @staticmethod
@@ -47,24 +51,19 @@ class GenImageCaptionAgent(TorchAgent):
 
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)
-        self.image_size = opt['image_size']
-        self.crop_size = opt['image_cropsize']
 
-        # initialize the transform function using torch vision.
-        self.transform = transforms.Compose([
-            transforms.Scale(self.image_size),
-            transforms.CenterCrop(self.crop_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225])
-        ])
+        if not shared:
+            self.image_size = opt['image_size']
+            self.crop_size = opt['image_cropsize']
 
-        if shared:
-            # model is shared during hogwild
-            self.model = shared['model']
-            self.metrics = shared['metrics']
-            states = shared['states']
-        else:
+            # initialize the transform function using torch vision.
+            self.transform = transforms.Compose([
+                transforms.Scale(self.image_size),
+                transforms.CenterCrop(self.crop_size),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+            ])
             self.model = GenImageCaption(opt, self.dict)
             self.metrics = {'loss': 0.0, 'num_tokens': 0}
 
@@ -77,36 +76,64 @@ class GenImageCaptionAgent(TorchAgent):
                 print('[ Loading existing model params from {} ]'.format(load_model))
                 states = self.load(opt['model_file'])
 
+
+            if not states:
+                # set up preinitialized embeddings
+                try:
+                    import torchtext.vocab as vocab
+                except ModuleNotFoundError as ex:
+                    print('Please install torch text with `pip install torchtext`')
+                    raise ex
+
+                init = 'glove'
+                embs = vocab.GloVe(name='840B', dim=300,
+                                   cache=modelzoo_path(self.opt.get('datapath'),
+                                                       'models:glove_vectors'))
+
+                if opt['embed_size'] != 300:
+                    rp = torch.Tensor(300, opt['embed_size']).normal_()
+                    t = lambda x: torch.mm(x.unsqueeze(0), rp)
+                else:
+                    t = lambda x: x
+                cnt = 0
+                for w, i in self.dict.tok2ind.items():
+                    if w in embs.stoi:
+                        vec = t(embs.vectors[embs.stoi[w]])
+                        self.model.decoder.embed.weight.data[i] = vec
+                        cnt += 1
+                print('Gen_Image_Caption: initialized embeddings for {} tokens from {}.'
+                      ''.format(cnt, init))
             if states:
                 # set loaded states if applicable
                 self.model.load_state_dict(states['model'])
 
-        self.criterion = nn.CrossEntropyLoss(
-                            ignore_index=self.NULL_IDX, size_average=False)
+            self.criterion = nn.CrossEntropyLoss(
+                                ignore_index=self.NULL_IDX, size_average=False)
 
-        if self.use_cuda:
-            self.model.cuda()
-            self.criterion.cuda()
-
-        self.optimizer = self.model.get_optim()
-        if 'optimizer' in states:
-            try:
-                self.optimizer.load_state_dict(states['optimizer'])
-            except ValueError:
-                print('WARNING: not loading optim state since model '
-                      'params changed.')
             if self.use_cuda:
-                for state in self.optimizer.state.values():
-                    for k, v in state.items():
-                        if isinstance(v, torch.Tensor):
-                            state[k] = v.cuda()
+                self.model.cuda()
+                self.criterion.cuda()
+
+            self.optimizer = self.model.get_optim()
+            if 'optimizer' in states:
+                try:
+                    self.optimizer.load_state_dict(states['optimizer'])
+                except ValueError:
+                    print('WARNING: not loading optim state since model '
+                          'params changed.')
+                if self.use_cuda:
+                    for state in self.optimizer.state.values():
+                        for k, v in state.items():
+                            if isinstance(v, torch.Tensor):
+                                state[k] = v.cuda()
 
         self.reset()
 
     def reset(self):
         self.observation = None
         self.episode_done = False
-        self.reset_metrics()
+        if hasattr(self, "metrics"):
+            self.reset_metrics()
 
     def reset_metrics(self):
         """Reset metrics for reporting loss and perplexity."""
@@ -138,21 +165,27 @@ class GenImageCaptionAgent(TorchAgent):
         # returned by map_valid.
         for item in observations:
             if is_training:
-                item['text'] = item['labels'][0]
-                item['text_vec'] = item['labels_vec'][0]
+                if 'labels' in item:
+                    item['text'] = item['labels'][0]
+                    item['text_vec'] = item['labels_vec'][0]
             else:
-                item['text'] = item['eval_labels'][0]
-                item['text_vec'] = item['eval_labels_vec'][0]
+                if 'eval_labels' in item:
+                    item['text'] = item['eval_labels'][0]
+                    item['text_vec'] = item['eval_labels_vec'][0]
 
         xs, x_lens, _, labels, valid_inds = self.map_valid(vec_obs)
 
+        if xs is None:
+            return batch_reply
+
+        valid_img_obs = [obs for obs in observations if 'text' in obs ]
         # Prepare the images
-        for ex in observations:
+        for ex in valid_img_obs:
             ex['image'] = self.transform(ex['image'])
             # if self.use_cuda:
             #     ex['image'] = ex['image'].cuda(async=True)
 
-        images = torch.stack([ex['image'] for ex in observations])
+        images = torch.stack([ex['image'] for ex in valid_img_obs])
         if self.use_cuda:
             images = images.cuda(async=True)
 
@@ -175,7 +208,7 @@ class GenImageCaptionAgent(TorchAgent):
                         output_tokens.append(token)
                 rep['text'] = self.dict.vec2txt(output_tokens)
         ran = random.random()
-        if (not is_training and xs is not None) or (is_training and ran < 0.01):
+        if (not is_training and xs is not None and ran < 0.05) or (is_training and ran < 0.25):
             pred_text = [o.get('text', None) for o in batch_reply]
             for pred, label in list(zip(pred_text, unmap_labels))[:5]:
                 if label is not None:

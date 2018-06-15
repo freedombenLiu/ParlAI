@@ -134,12 +134,12 @@ class TorchAgent(Agent):
                           observation, determines if an observation is valid
         """
         if len(obs_batch) == 0:
-            return Batch()
+            return Batch(None, None, None, None, None)
 
         valid_obs = [(i, ex) for i, ex in enumerate(obs_batch) if is_valid(ex)]
 
         if len(valid_obs) == 0:
-            return Batch()
+            return Batch(None, None, None, None, None)
 
         valid_inds, exs = zip(*valid_obs)
 

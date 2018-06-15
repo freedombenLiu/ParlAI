@@ -241,7 +241,7 @@ class FixedDialogTeacher(Teacher):
 
         if hasattr(self, 'examples'):
             shared['examples'] = self.examples
-            
+
         if self.opt.get('numthreads', 1) > 1:
             if type(self.index) is not multiprocessing.sharedctypes.Synchronized:
                 # for multithreading need to move index into threadsafe memory
@@ -294,7 +294,7 @@ class FixedDialogTeacher(Teacher):
         self.episode_done = ex.get('episode_done', False)
 
         if (not self.random and self.episode_done
-                and self.episode_idx + 1 >= self.num_episodes()):
+                and self.episode_idx + self.opt.get("batchsize", 1) >= self.num_episodes()):
             epoch_done = True
         else:
             epoch_done = False

@@ -5,11 +5,16 @@
 # of patent rights can be found in the PATENTS file in the same directory.
 
 import torch
+from torch import optim
 import torch.nn as nn
 import torchvision.models as models
 
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
+OPTIM_OPTS = {
+    'adam': optim.Adam,
+    'sgd': optim.SGD
+}
 
 class GenImageCaption(nn.Module):
     def __init__(self, opt, dict):
@@ -31,10 +36,16 @@ class GenImageCaption(nn.Module):
         return tokens, preds
 
     def get_optim(self):
+        optim_class = OPTIM_OPTS[self.opt['optimizer']]
+        kwargs = {'lr': self.opt['learning_rate']}
+        if self.opt['optimizer'] == 'adam':
+            # https://openreview.net/forum?id=ryQu7f-RZ
+            kwargs['amsgrad'] = True
+
         params = list(self.decoder.parameters()) + \
                  list(self.encoder.linear.parameters()) + \
                  list(self.encoder.bn.parameters())
-        optim = torch.optim.Adam(params, lr=self.opt['learning_rate'])
+        optim = optim_class(params, **kwargs)
         return optim
 
 
@@ -58,9 +69,11 @@ class EncoderCNN(nn.Module):
 
 
 class DecoderRNN(nn.Module):
-    def __init__(self, embed_size, hidden_size, vocab_size, num_layers, max_seq_length=20):
+    def __init__(self, embed_size, hidden_size, vocab_size, num_layers,
+                 max_seq_length=20, dropout=0.1):
         """Set the hyper-parameters and build the layers."""
         super(DecoderRNN, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
         self.embed = nn.Embedding(vocab_size, embed_size)
         self.lstm = nn.LSTM(embed_size, hidden_size,
                             num_layers, batch_first=True)
@@ -72,13 +85,13 @@ class DecoderRNN(nn.Module):
         inputs = features.unsqueeze(1)
         if captions is not None:
             # Training
-            embeddings = self.embed(captions)
+            embeddings = self.dropout(self.embed(captions))
             embeddings = torch.cat((inputs, embeddings), 1)
             packed = pack_padded_sequence(embeddings, caption_lens, batch_first=True)
             hiddens, _ = self.lstm(packed)
             unpacked_outputs, _ = pad_packed_sequence(hiddens, batch_first=True)
             outputs = self.linear(unpacked_outputs)
-            outputs = outputs.permute(0,2,1)
+            outputs = self.dropout(outputs.permute(0,2,1))
             _, ids = outputs.max(1)
             return ids, outputs
         else:

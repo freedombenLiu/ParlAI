@@ -220,6 +220,7 @@ class DefaultTeacher(FixedDialogTeacher):
     def reset(self):
         super().reset()  # call parent reset so other fields can be set up
         self.example = None  # set up caching fields
+        self.imageEpochDone = False
 
     def num_examples(self):
         # We only have annotations for the train and val sets, so for the test
@@ -227,7 +228,7 @@ class DefaultTeacher(FixedDialogTeacher):
         if not self.datatype.startswith('test'):
             return len(self.annotation['annotations'])
         else:
-            return len(self.test_info['images'])
+            return len(self.annotation['images'])
 
     def num_episodes(self):
         return self.num_examples()
@@ -261,13 +262,13 @@ class DefaultTeacher(FixedDialogTeacher):
         ready = None
         # pull up the currently queued example
         if self.example is not None:
-            if self.image_mode != 'none':
+            if self.image_mode != 'none' and 'image_id' in self.example:
                 # move the image we loaded in the background into the example
                 image = self.data_queue.get()
                 self.example['image'] = image
-            ready = (self.example, self.epochDone)
+            ready = (self.example, self.imageEpochDone)
         # get the next base example: super().next_example() calls self.get()
-        self.example, self.epochDone = super().next_example()
+        self.example, self.imageEpochDone = super().next_example()
         if self.image_mode != 'none' and 'image_id' in self.example:
             # load the next image in the background
             image_id = self.example['image_id']
