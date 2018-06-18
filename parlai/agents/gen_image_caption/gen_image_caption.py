@@ -67,7 +67,7 @@ class GenImageCaptionAgent(TorchAgent):
                 transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
             ])
-            self.model = GenImageCaption(opt, self.dict)
+            self.model = GenImageCaption(opt, self.dict, self.use_cuda)
             self.metrics = {'loss': 0.0, 'num_tokens': 0}
 
             load_model = None

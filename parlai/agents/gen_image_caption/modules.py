@@ -17,7 +17,7 @@ OPTIM_OPTS = {
 }
 
 class GenImageCaption(nn.Module):
-    def __init__(self, opt, dict):
+    def __init__(self, opt, dict, use_cuda):
         super().__init__()
         self.opt = opt
         self.dict = dict
@@ -29,6 +29,7 @@ class GenImageCaption(nn.Module):
                                   hidden_size=opt['hidden_size'],
                                   vocab_size=vocab_size,
                                   dict=dict,
+                                  use_cuda=use_cuda,
                                   num_layers=opt['num_layers'],
                                   max_seq_length=opt['max_pred_length'])
 
@@ -48,9 +49,10 @@ class GenImageCaption(nn.Module):
 
         params = list(self.decoder.parameters()) + \
                  list(self.encoder.linear.parameters()) + \
-                 list(self.encoder.bn.parameters()) + \
-                 list(self.encoder.hidden.parameters()) + \
-                 list(self.encoder.cell.parameters())
+                 list(self.encoder.bn.parameters())
+        if self.opt['use_feature_state']:
+            params += list(self.encoder.hidden.parameters()) + \
+                      list(self.encoder.cell.parameters())
         optim = optim_class(params, **kwargs)
         return optim
 
@@ -81,11 +83,12 @@ class EncoderCNN(nn.Module):
 
 class DecoderRNN(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab_size, num_layers,
-                 dict, max_seq_length=20, dropout=0.1):
+                 dict, use_cuda, max_seq_length=20, dropout=0.1):
         """Set the hyper-parameters and build the layers."""
         super(DecoderRNN, self).__init__()
         self.vocab_size = vocab_size
         self.START_IDX = dict[dict.start_token]
+        self.use_cuda = use_cuda
         self.dropout = nn.Dropout(p=dropout)
         self.embed = nn.Embedding(vocab_size, embed_size)
         self.lstm = nn.LSTM(embed_size*2, hidden_size,
@@ -113,6 +116,8 @@ class DecoderRNN(nn.Module):
             return ids, outputs
         else:
             prev_token = torch.LongTensor(features.shape[0]).fill_(self.START_IDX)
+            if self.use_cuda:
+                prev_token = prev_token.cuda()
             prev_token = self.embed(prev_token)
             prev_token = prev_token.unsqueeze(1)
 
@@ -122,7 +127,7 @@ class DecoderRNN(nn.Module):
                                                  else longest_label
 
             for i in range(max_seg_length):
-                feature_tokens = torch.cat((features, prev_token), 1)
+                feature_tokens = torch.cat((features, prev_token), 2)
                 # import pdb; pdb.set_trace()
                 hidden, states = self.lstm(feature_tokens, states)
                 outputs = self.linear(hidden.squeeze(1))    # outputs: (bsz, vocab_size)
