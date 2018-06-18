@@ -145,12 +145,15 @@ Additional flags can be used for more specific purposes.
 
 - ``--max-connections`` controls the number of HITs can be launched at the same time. If not specified, it defaults to 30; 0 is unlimited.
 
+- ``--max-time`` sets a maximum limit in seconds for how many seconds per day a specific worker can work on your task. Data is logged to ``working_time.pickle``, so all runs on the same machine will share the daily work logs.
+
+- ``--max-time-qual`` sets the specific qualification name for the max-time soft block. Using this can allow you to limit worker time between separate machines where ``working_time.pickle`` isn't shared
 
 Handling Turker Disconnects
 ---------------------------
 Sometimes you may find that a task you have created is leading to a lot of workers disconnecting in the middle of a conversation, or that a few people are disconnecting repeatedly. ParlAI MTurk offers two kinds of blocks to stop these workers from doing your hits.
 
-- soft blocks can be created by using the ``--block-qualification <name>`` flag with a name that you want to associate to your ParlAI tasks. Any user that hits the disconnect cap for a HIT with this flag active will not be able to participate in any HITs using this flag.
+- soft blocks can be created by using the ``--disconnect-qualification <name>`` flag with a name that you want to associate to your ParlAI tasks. Any user that hits the disconnect cap for a HIT with this flag active will not be able to participate in any HITs using this flag.
 
 - hard blocks can be used by setting the ``--hard-block`` flag. Soft blocks in general are preferred, as Turkers can be block-averse (as it may affect their reputation) and sometimes the disconnects are out of their control. This will prevent any Turkers that hit the disconnect cap with this flag active from participating in any of your future HITs of any type.
 
@@ -161,6 +164,48 @@ Reviewing Turker's Work
 You can programmatically review work using the commands available in the `MTurkManager` class. See, for example, the  `review_work function <https://github.com/facebookresearch/ParlAI/blob/master/parlai/mturk/tasks/personachat/personachat_collect_personas/worlds.py/>`__ in the ``personachat_collect_personas`` task. In this task, HITs are automatically approved if they are deemed completed by the world.
 
 If you don't take any action in 4 weeks, all HITs will be auto-approved and Turkers will be paid.
+
+
+ParlAI-MTurk Tips and Tricks
+----------------------------
+
+Approving Work
+^^^^^^^^^^^^^^
+
+- Unless you explicitly set the flag `—auto-approve-delay` or approve the agents work by calling `mturk_agent.approve_work()`, work will be auto approved after 30 days; workers generally like getting paid sooner than this so set the `auto_approve_delay` to be shorter when possible.
+- Occasionally Turkers will take advantage of getting paid immediately without review if you auto approve their work by calling `mturk_agent.approve_work()` at the close of the task. If you aren't using any kind of validation before you `approve_work` or if you don't intend to review the work manually, consider setting the `—-auto-approve-delay` flag rather than approving immediately.
+
+Rejecting Work
+^^^^^^^^^^^^^^
+
+- Most Turkers take their work very seriously, so if you find yourself with many different workers making similar mistakes on your task, it's possible the task itself is unclear. You **shouldn't** be rejecting work in this case, rather you should update your instructions and see if the problem resolves.
+- Reject sparingly at first and give clear reasons for rejection/how to improve. Rejections with no context are a violation of Amazon's TOS.
+
+Soft-blocking vs. Hard-blocking
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- Hard block sparingly; it's possible workers that aren't doing well on a particular task are perfectly good at others. Hard blocking reduces your possible worker pool.
+- Soft blocking workers that are clearly trying on a task but not **quite** getting it allows those workers to work on other tasks for you in the future. You can soft block workers by calling `mturk_manager.soft_block_worker(<worker id>)` after setting `—-block-qualification`. That worker will not be able to work on any tasks that use the same `—-block-qualification`.
+
+Preventing and Handling Crashes
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- Set the `--max-connections` flag sufficiently low for your task; this controls the number of people who can work on your task at any given time. Leaving this too high might leave your heroku server running into issues depending on how many messages per second it's trying to process, and on how much data is being sent in those messages (such as picture or video data).
+- If you're using a model on your local machine, try to share the model parameters whenever possible. Needing new parameters for each of your conversations might run your machine out of memory, causing the data collection to crash in an manner that ParlAI can't handle
+- If your task crashes, you'll need to run the `delete_hits` script and find the task that had crashed to remove the orphan tasks.
+- If workers email you about task crashes with sufficient evidence that they were working on the task, offer to compensate by sending them a bonus for the failed task on one of their other completed tasks, then bonus that `HITId` with the `bonus_workers` script.
+
+Task Design
+^^^^^^^^^^^
+
+- Design and test your task using the developer sandbox feature (used by default when calling a `run.py`), only launch `--live` after you've tested your flow entirely.
+- Launch a few small pilot hits `--live` before your main data collection, and manually review every response to see how well the workers are understanding your task. Use this time to tweak your task instructions until you're satisfied with the results, as this will improve the quality of the received data.
+
+Other Tips
+^^^^^^^^^^
+
+- Check your MTurk-associated email frequently when running a task, and be responsive to the workers working on your tasks. This is important to keep a good reputation in the MTurk community.
+- If you notice that certain workers are doing a really good job on the task, send them bonuses, as this will encourage them to work on your HITs more in the future. It will also be a visible way for you to acknowledge their good work.
 
 
 -------

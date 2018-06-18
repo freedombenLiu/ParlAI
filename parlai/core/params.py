@@ -10,11 +10,26 @@ using the ParlAI package.
 import argparse
 import importlib
 import os
+import pickle
 import sys
 import datetime
 from parlai.core.agents import get_agent_module, get_task_module
 from parlai.tasks.tasks import ids_to_tasks
 from parlai.core.build_data import modelzoo_path
+
+
+def get_model_name(opt):
+    model = opt.get('model', None)
+    if model is None:
+        # try to get model name from model opt file
+        model_file = opt.get('model_file', None)
+        if model_file is not None:
+            optfile = model_file + '.opt'
+            if os.path.isfile(optfile):
+                with open(optfile, 'rb') as handle:
+                    new_opt = pickle.load(handle)
+                    model = new_opt.get('model', None)
+    return model
 
 
 def str2bool(value):
@@ -134,11 +149,19 @@ class ParlaiParser(argparse.ArgumentParser):
             help='importance level for what to put into the logs. the lower '
                  'the level the more that gets logged. values are 0-50')
         mturk.add_argument(
-            '--block-qualification', dest='block_qualification', default='',
-            help='Qualification to use for soft blocking users. By default '
+            '--disconnect-qualification', dest='disconnect_qualification',
+            default='',
+            help='Qualification to use for soft blocking users for '
+                 'disconnects. By default '
                  'turkers are never blocked, though setting this will allow '
                  'you to filter out turkers that have disconnected too many '
                  'times on previous HITs where this qualification was set.')
+        mturk.add_argument(
+            '--block-qualification', dest='block_qualification', default='',
+            help='Qualification to use for soft blocking users. This '
+                 'qualification is granted whenever soft_block_worker is '
+                 'called, and can thus be used to filter workers out from a '
+                 'single task or group of tasks by noted performance.')
         mturk.add_argument(
             '--count-complete', dest='count_complete',
             default=False, action='store_true',
@@ -167,6 +190,16 @@ class ParlaiParser(argparse.ArgumentParser):
             '--local', dest='local', default=False, action='store_true',
             help='Run the server locally on this server rather than setting up'
                  ' a heroku server.'
+        )
+        mturk.add_argument(
+            '--max-time', dest='max_time', default=0, type=int,
+            help='Maximum number of seconds per day that a worker is allowed '
+                 'to work on this assignment'
+        )
+        mturk.add_argument(
+            '--max-time-qual', dest='max_time_qual', default='',
+            help='Qualification to use to share the maximum time requirement '
+                 'with other runs from other machines.'
         )
 
         mturk.set_defaults(is_sandbox=True)
@@ -214,6 +247,8 @@ class ParlaiParser(argparse.ArgumentParser):
             '-dt', '--datatype', default='train',
             choices=['train', 'train:stream', 'train:ordered',
                      'train:ordered:stream', 'train:stream:ordered',
+                     'train:evalmode', 'train:evalmode:stream', 'train:evalmode:ordered',
+                     'train:evalmode:ordered:stream', 'train:evalmode:stream:ordered',
                      'valid', 'valid:stream', 'test', 'test:stream'],
             help='choose from: train, train:ordered, valid, test. to stream '
                  'data add ":stream" to any option (e.g., train:stream). '
@@ -330,7 +365,7 @@ class ParlaiParser(argparse.ArgumentParser):
             self.add_task_args(evaltask)
 
         # find which model specified if any, and add its specific arguments
-        model = parsed.get('model', None)
+        model = get_model_name(parsed)
         if model is not None:
             self.add_model_subargs(model)
 

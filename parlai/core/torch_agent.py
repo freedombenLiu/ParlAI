@@ -13,6 +13,7 @@ except Exception as e:
     raise ModuleNotFoundError('Need to install Pytorch: go to pytorch.org')
 
 from collections import deque, namedtuple
+import pickle
 import random
 
 Batch = namedtuple("Batch", [
@@ -278,3 +279,40 @@ class TorchAgent(Agent):
                 self.history['labels'] = labels
 
         return self.history['dialog']
+
+    def save(self, path):
+        """Save model parameters if model_file is set.
+
+        Override this method for more specific saving.
+        """
+        path = self.opt.get('model_file', None) if path is None else path
+
+        if path:
+            states = {}
+            if hasattr(self, 'model'):  # save model params
+                states['model'] = self.model.state_dict()
+            if hasattr(self, 'optimizer'):  # save optimizer params
+                states['optimizer'] = self.optimizer.state_dict()
+
+            if states:  # anything found to save?
+                with open(path, 'wb') as write:
+                    torch.save(states, write)
+
+                # save opt file
+                with open(path + ".opt", 'wb') as handle:
+                    pickle.dump(self.opt, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def load(self, path):
+        """Return opt and model states.
+
+        Override this method for more specific loading.
+        """
+        states = torch.load(path, map_location=lambda cpu, _: cpu)
+        return states
+
+    def shutdown(self):
+        """Save the state of the model when shutdown."""
+        path = self.opt.get('model_file', None)
+        if path is not None:
+            self.save(path + '.shutdown_state')
+        super().shutdown()

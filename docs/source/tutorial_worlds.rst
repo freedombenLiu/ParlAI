@@ -9,18 +9,27 @@ Data Handling, Batching, and Hogwild
 ====================================
 **Authors**: Alexander Holden Miller, Kurt Shuster
 
-Summary
-^^^^^^^
-`Data Handling <#multiprocessed-pytorch-dataloader>`_
 
-When a dataset is very large, or requires a lot of preprocessing before a model
-can use it, you can use our ``PytorchDataTeacher``, which utilizes multiprocessed
-dataloading for streaming data from disk (rather than loading it into memory).
+Overview
+^^^^^^^^
 
-`Batching <#batching>`_ and `Hogwild <#hogwild-multiprocessing>`_
+If you are unfamiliar with the basics of displaying data or
+calling train or evaluate on a model, please first see
+the `getting started <tutorial_basic.html>`_ section.
+If you are interested in creating a task, please see 
+`that section <tutorial_task.html>`_.
 
-There's one function we need to support for both hogwild and batching: ``share()``.
+This section will cover the details of:
 
+1) `hogwild (multiprocessing) <#id1>`_;
+
+2) `batched data <#batching>`_; and
+
+3) `handling large datasets using PyTorch Data Loaders <#multiprocessed-pytorch-dataloader>`_
+
+
+For all tasks one might make,
+there's one function we need to support for both hogwild and batching: ``share()``. 
 This function should provide whatever is needed to set up a "copy" of the original
 instance of the agent for either each row of a batch or each thread in hogwild.
 
@@ -29,6 +38,15 @@ use one or the other. However, an agent may check the ``numthreads`` and/or
 ``batchsize`` options to adjust its behavior if it wants to support both, and
 we do support doing both batching and hogwild at the same time if the agent
 desires.
+
+When a dataset is very large, or requires a lot of preprocessing before a model
+can use it, you can use our ``PytorchDataTeacher``, which utilizes multiprocessed
+dataloading for streaming data from disk (rather than loading it into memory).
+That system can take your task as input, and make it fast to load, or you can roll your own specific
+setups if you speed or space issues are really at a premium.
+
+
+
 
 
 Hogwild (multiprocessing)
@@ -149,6 +167,7 @@ There's a few more complex steps to actually completing a parley in this world.
 
 Next, we'll look at how teachers and models can take advantage of the setup
 above to improve performance.
+
 
 
 Batched Teachers
@@ -314,10 +333,12 @@ The ``PytorchDataTeacher`` can be used with any dataset/task currently provided
 on the ParlAI platform. There are two ways you can utilize the ``PytorchDataTeacher``
 for your specific task. One involves using the ``StreamDataset`` that we have
 provided; the other involves writing your own dataset. Each will be covered
-step by step below.
+step by step below. The important thing to know is that in the first case you **only**
+need to write a teacher; in the second case, you **only** need to write a ``Dataset``.
 
-StreamDataset
-*************
+
+PyTorch StreamDataset
+*********************
 1. Ensure that there is an appropriate teacher that already exists, which
 can read the data saved on disk and produce an action/observation dict for any
 agent.
@@ -384,16 +405,19 @@ Then, you can build the pytorch data with one of the following commands:
 e.g. the validation set file, simply add the following:
 ``--datafile data/bAbI/tasks_1-20_v1-2/en-valid-10k-nosf/qa1_valid.txt``
 
-Your Own Dataset
-****************
+Your Own PyTorch Dataset
+************************
 1. To use your own method of retrieving data (rather than the streaming data option),
 you can simply subclass the Pytorch ``Dataset`` class (as specified `here <http://pytorch.org/tutorials/beginner/data_loading_tutorial.html>`_).
 You can add this class anywhere you would like; a good place would be in the
 ``agents.py`` file for the task you are writing a ``Dataset`` for.
 
-2. Then, in the **agent** to which you will be providing the data,
-implement a static method ``collate`` that takes one argument, ``batch``, which
-is a list of data items returned by your custom ``Dataset``.
+2. **(Optional)** The default ``collate_fn`` that will be used is the one
+specified above in the ``PytorchDataTeacher``. If you would like to specify your
+own ``collate_fn``, you can implement a static method ``collate`` in the **agent**
+to which you will be providing the data. This function takes one argument, ``batch``, which
+is a list of data items returned by your custom ``Dataset``, and returns a
+collated batch.
 
 3. Finally, you would need to specify the ``Dataset`` location on the command line
 in the following fashion: ``--dataset path.to.dataset:DatasetClassName``. If you
@@ -415,17 +439,17 @@ list of examples provided by the ``VQADataset``.
 3. Finally, to use the ``PytorchDataTeacher`` with the custom ``Dataset`` and
 ``collate``, run the following command::
 
-  python examples/train_model.py -m mlb_vqa -t pytorch_teacher --pytorch-buildteacher vqa_v1 --dataset parlai.tasks.vqa_v1.agents -im resnet152_spatial --image-size 448 --image-cropsize 448
+  python examples/train_model.py -m mlb_vqa -t pytorch_teacher --dataset parlai.tasks.vqa_v1.agents
 
-Batch Sorting and Squashing
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PyTorch Batch Sorting and Squashing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 One of the benefits of using the ``StreamDataset`` described above when
 using the ``PytorchDataTeacher`` is that you can achieve the benefits of
 batch sorting and squashing (that is, reducing padding in batches by
 providing the models with similarly sized batches) without having
 to load the whole dataset into memory. We provide an on-the-fly
 batch sorter that uses aggressive caching to create and provide
-batches of similarly sized examples to modles nearly as quickly (if not as quickly) as
+batches of similarly sized examples to models nearly as quickly (if not as quickly) as
 can be provided without sorting.
 
 To use the batch sorting method, just specify the following two command line

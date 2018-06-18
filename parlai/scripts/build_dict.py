@@ -8,9 +8,10 @@
 from parlai.core.dict import DictionaryAgent
 from parlai.core.params import ParlaiParser, str2class
 from parlai.core.worlds import create_task
+from parlai.core.utils import TimeLogger
 import copy
 import os
-
+import sys
 
 def setup_args(parser=None):
     if parser is None:
@@ -22,6 +23,7 @@ def setup_args(parser=None):
         help='Include validation set in dictionary building for task.')
     dict_loop.add_argument('--dict-include-test', default=False, type='bool',
         help='Include test set in dictionary building for task.')
+    dict_loop.add_argument('-ltim', '--log-every-n-secs', type=float, default=2)
     partial, _ = parser.parse_known_args(nohelp=True)
     if vars(partial).get('dict_class'):
         str2class(vars(partial).get('dict_class')).add_cmdline_args(parser)
@@ -29,7 +31,7 @@ def setup_args(parser=None):
         DictionaryAgent.add_cmdline_args(parser)
     return parser
 
-def build_dict(opt):
+def build_dict(opt, skip_if_built=False):
     if isinstance(opt, ParlaiParser):
         print('[ Deprecated Warning: should be passed opt not Parser ]')
         opt = opt.parse_args()
@@ -37,17 +39,24 @@ def build_dict(opt):
         print('Tried to build dictionary but `--dict-file` is not set. Set ' +
               'this param so the dictionary can be saved.')
         return
-    print('[ setting up dictionary. ]')
+
+    if skip_if_built and os.path.isfile(opt['dict_file']):
+        # Dictionary already built, skip all loading or setup
+        print("[ dictionary already built .]")
+        return None
+
     if opt.get('dict_class'):
         # Custom dictionary class
         dictionary = str2class(opt['dict_class'])(opt)
     else:
         # Default dictionary class
         dictionary = DictionaryAgent(opt)
+
     if os.path.isfile(opt['dict_file']):
-        # Dictionary already built
+        # Dictionary already built, return loaded dictionary agent
         print("[ dictionary already built .]")
         return dictionary
+
     ordered_opt = copy.deepcopy(opt)
     cnt = 0
     # we use train set to build dictionary
@@ -70,6 +79,11 @@ def build_dict(opt):
         ordered_opt['datatype'] = dt
         world_dict = create_task(ordered_opt, dictionary)
         # pass examples to dictionary
+        print('[ running dictionary over data.. ]')
+        log_every_n_secs = opt.get('log_every_n_secs', -1)
+        if log_every_n_secs <= 0:
+            log_every_n_secs = float('inf')
+        log_time = TimeLogger()
         while not world_dict.epoch_done():
             cnt += 1
             if cnt > opt['dict_maxexs'] and opt['dict_maxexs'] > 0:
@@ -77,6 +91,13 @@ def build_dict(opt):
                 # don't wait too long...
                 break
             world_dict.parley()
+            if log_time.time() > log_every_n_secs:
+                sys.stdout.write('\r')
+                text, _log = log_time.log(cnt, max(opt.get('dict_maxexs',0),
+                                                   world_dict.num_examples()))
+                sys.stdout.write(text)
+                sys.stdout.flush()
+
     dictionary.save(opt['dict_file'], sort=True)
     print('[ dictionary built with {} tokens ]'.format(len(dictionary)))
     return dictionary
