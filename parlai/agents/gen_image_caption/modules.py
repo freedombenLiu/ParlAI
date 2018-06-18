@@ -89,6 +89,7 @@ class DecoderRNN(nn.Module):
         super(DecoderRNN, self).__init__()
         self.vocab_size = vocab_size
         self.START_IDX = dict[dict.start_token]
+        self.dict = dict
         self.use_cuda = use_cuda
         self.concat_feats = concat_feats
         self.dropout = nn.Dropout(p=dropout)
@@ -104,7 +105,8 @@ class DecoderRNN(nn.Module):
     def forward(self, features, state, captions, caption_lens, longest_label):
         """Decode image feature vectors and generates captions."""
         features = features.unsqueeze(1)
-        if captions is not None:
+        # if captions is not None:
+        if False:
             # Training
             embeddings = self.dropout(self.embed(captions))
 
@@ -126,7 +128,6 @@ class DecoderRNN(nn.Module):
             prev_token = self.embed(prev_token)
             prev_token = prev_token.unsqueeze(1)
 
-            states = None
             sampled_preds = []
             max_seg_length = self.max_seg_length if longest_label is None \
                                                  else longest_label
@@ -137,15 +138,16 @@ class DecoderRNN(nn.Module):
                 else:
                     feature_tokens = prev_token
                 # import pdb; pdb.set_trace()
-                hidden, states = self.lstm(feature_tokens, states)
+                hidden, state = self.lstm(feature_tokens, state)
                 outputs = self.linear(hidden.squeeze(1))    # outputs: (bsz, vocab_size)
                 _, predicted = outputs.max(1)                # predicted: (bsz)
                 # print(predicted)
                 sampled_preds.append(outputs)
 
                 if i < max_seg_length - 1:
-                    inputs = self.embed(predicted)  # inputs: (batch_size, embed_size)
-                    inputs = inputs.unsqueeze(1)  # inputs: (batch_size, 1, embed_size)
+                    next_input = predicted if captions is None else captions[:, i]
+                    prev_token = self.embed(next_input)  # inputs: (batch_size, embed_size)
+                    prev_token = prev_token.unsqueeze(1)  # inputs: (batch_size, 1, embed_size)
 
             # sampled_ids: (batch_size, max_seg_length)
             sampled_preds = torch.stack(sampled_preds, 2)
