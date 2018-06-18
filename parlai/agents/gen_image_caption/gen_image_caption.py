@@ -46,6 +46,8 @@ class GenImageCaptionAgent(TorchAgent):
         agent.add_argument('--use_feature_state', type='bool',
                            default=True,
                            help='Initialize LSTM state with image features')
+        agent.add_argument('--concat_img_feats', type='bool', default=True,
+                           help='Concat resnet feats to each token during generation')
         GenImageCaptionAgent.dictionary_class().add_cmdline_args(argparser)
 
     @staticmethod

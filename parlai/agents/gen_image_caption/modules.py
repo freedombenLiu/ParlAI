@@ -30,6 +30,7 @@ class GenImageCaption(nn.Module):
                                   vocab_size=vocab_size,
                                   dict=dict,
                                   use_cuda=use_cuda,
+                                  concat_feats=opt['concat_img_feats'],
                                   num_layers=opt['num_layers'],
                                   max_seq_length=opt['max_pred_length'])
 
@@ -83,15 +84,17 @@ class EncoderCNN(nn.Module):
 
 class DecoderRNN(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab_size, num_layers,
-                 dict, use_cuda, max_seq_length=20, dropout=0.1):
+                 dict, use_cuda, concat_feats, max_seq_length=20, dropout=0.1):
         """Set the hyper-parameters and build the layers."""
         super(DecoderRNN, self).__init__()
         self.vocab_size = vocab_size
         self.START_IDX = dict[dict.start_token]
         self.use_cuda = use_cuda
+        self.concat_feats = concat_feats
         self.dropout = nn.Dropout(p=dropout)
         self.embed = nn.Embedding(vocab_size, embed_size)
-        self.lstm = nn.LSTM(embed_size*2, hidden_size,
+        lstm_size = embed_size*2 if self.concat_feats else embed_size
+        self.lstm = nn.LSTM(lstm_size, hidden_size,
                             num_layers, batch_first=True)
         self.linear = nn.Linear(hidden_size, vocab_size)
         # maybe do one linear from hidden to embed and one from embed to vocab,
@@ -102,11 +105,13 @@ class DecoderRNN(nn.Module):
         """Decode image feature vectors and generates captions."""
         features = features.unsqueeze(1)
         if captions is not None:
-            features = features.repeat(1, captions.shape[1], 1)
             # Training
             embeddings = self.dropout(self.embed(captions))
-            # import pdb; pdb.set_trace()
-            embeddings = torch.cat((features, embeddings), 2)
+
+            if self.concat_feats:
+                features = features.repeat(1, captions.shape[1], 1)
+                embeddings = torch.cat((features, embeddings), 2)
+
             packed = pack_padded_sequence(embeddings, caption_lens, batch_first=True)
             hiddens, _ = self.lstm(packed, state)
             unpacked_outputs, _ = pad_packed_sequence(hiddens, batch_first=True)
@@ -127,7 +132,10 @@ class DecoderRNN(nn.Module):
                                                  else longest_label
 
             for i in range(max_seg_length):
-                feature_tokens = torch.cat((features, prev_token), 2)
+                if self.concat_feats:
+                    feature_tokens = torch.cat((features, prev_token), 2)
+                else:
+                    feature_tokens = prev_token
                 # import pdb; pdb.set_trace()
                 hidden, states = self.lstm(feature_tokens, states)
                 outputs = self.linear(hidden.squeeze(1))    # outputs: (bsz, vocab_size)
