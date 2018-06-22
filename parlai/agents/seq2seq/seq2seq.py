@@ -7,7 +7,7 @@
 from parlai.core.agents import Agent
 from parlai.core.build_data import modelzoo_path
 from parlai.core.dict import DictionaryAgent
-from parlai.core.utils import maintain_dialog_history, PaddingUtils, round_sigfigs
+from parlai.core.utils import maintain_dialog_history, PaddingUtils, round_sigfigs, none_or_str
 from parlai.core.thread_utils import SharedTable
 from .modules import Seq2seq
 
@@ -61,7 +61,7 @@ class Seq2seqAgent(Agent):
     def add_cmdline_args(argparser):
         """Add command-line arguments specifically for this agent."""
         agent = argparser.add_argument_group('Seq2Seq Arguments')
-        agent.add_argument('--init-model', type=str, default=None,
+        agent.add_argument('--init-model', type=none_or_str, default=None,
                            help='load dict/features/weights/opts from this file')
         agent.add_argument('-hs', '--hiddensize', type=int, default=128,
                            help='size of the hidden layers')

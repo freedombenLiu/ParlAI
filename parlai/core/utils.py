@@ -10,6 +10,10 @@ import os
 import random
 import time
 
+def none_or_str(value):
+    if value == 'None':
+        return None
+    return value
 
 def maintain_dialog_history(history, observation, reply='',
                             historyLength=1, useReplies='label_else_model',
