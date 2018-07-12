@@ -164,6 +164,9 @@ class MessageSender():
 
     def typing_on(self, receiver_id):
         self.send_sender_action(receiver_id, "typing_on")
+        
+    def typing_off(self, receiver_id):
+        self.send_sender_action(receiver_id, "typing_off")
 
     def send_fb_payload(self, receiver_id, payload, quick_replies=None):
         """Sends a payload to messenger, processes it if we can"""

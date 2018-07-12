@@ -59,6 +59,10 @@ class MessengerAgent(Agent):
         """Allow agent to observe typing indicator"""
         self.manager.message_sender.typing_on(self.id)
 
+    def observe_typing_off(self):
+        """Allow agent to observe typing indicator"""
+        self.manager.message_sender.typing_off(self.id)
+
     def put_data(self, message):
         """Put data into the message queue if it hasn't already been seen"""
         mid = message['message']['mid']
