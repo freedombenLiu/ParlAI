@@ -295,7 +295,7 @@ class Seq2seqAgent(Agent):
 
             if states:
                 # set loaded states if applicable
-                self.model.load_state_dict(states['model'])
+                self.model.load_state_dict(states['model'], strict=False)
                     
             if self.use_cuda:
                 self.model.cuda()
