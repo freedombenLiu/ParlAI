@@ -65,58 +65,58 @@ class Seq2seqAgent(Agent):
         agent.add_argument('--init-model', type=str, default=None,
                            help='load dict/features/weights/opts from this file')
         agent.add_argument('-hs', '--hiddensize', type=int, default=128,
-                           help='size of the hidden layers')
+                           help='size of the hidden layers, default is %(default)s')
         agent.add_argument('-esz', '--embeddingsize', type=int, default=128,
-                           help='size of the token embeddings')
+                           help='size of the token embeddings, default is %(default)s')
         agent.add_argument('-nl', '--numlayers', type=int, default=2,
-                           help='number of hidden layers')
+                           help='number of hidden layers, default is %(default)s')
         agent.add_argument('-lr', '--learningrate', type=float, default=1,
-                           help='learning rate')
+                           help='learning rate, default is %(default)s')
         agent.add_argument('-dr', '--dropout', type=float, default=0.1,
-                           help='dropout rate')
+                           help='dropout rate, default is %(default)s')
         agent.add_argument('-clip', '--gradient-clip', type=float, default=0.1,
-                           help='gradient clipping using l2 norm')
+                           help='gradient clipping using l2 norm, default is %(default)s')
         agent.add_argument('-bi', '--bidirectional', type='bool',
                            default=False,
                            help='whether to encode the context with a '
-                                'bidirectional rnn')
+                                'bidirectional rnn, default is %(default)s')
         agent.add_argument('-att', '--attention', default='none',
                            choices=['none', 'concat', 'general', 'dot', 'local'],
                            help='Choices: none, concat, general, local. '
                                 'If set local, also set attention-length. '
-                                '(see arxiv.org/abs/1508.04025)')
+                                '(see arxiv.org/abs/1508.04025), default is %(default)s')
         agent.add_argument('-attl', '--attention-length', default=48, type=int,
-                           help='Length of local attention.')
+                           help='Length of local attentiou, default is %(default)s')
         agent.add_argument('--attention-time', default='post',
                            choices=['pre', 'post'],
                            help='Whether to apply attention before or after '
-                                'decoding.')
+                                'decoding, default is %(default)s')
         agent.add_argument('--no-cuda', action='store_true', default=False,
-                           help='disable GPUs even if available')
+                           help='disable GPUs even if available, default is %(default)s')
         agent.add_argument('-gpu', '--gpu', type=int, default=-1,
-                           help='which GPU device to use')
+                           help='which GPU device to use, default is %(default)s')
         # ranking arguments
         agent.add_argument('-rc', '--rank-candidates', type='bool',
                            default=False,
                            help='rank candidates if available. this is done by'
                                 ' computing the prob score per token for each '
-                                'candidate and selecting the highest scoring.')
+                                'candidate and selecting the highest scoring, default is %(default)s')
         agent.add_argument('-tr', '--truncate', type=int, default=-1,
                            help='truncate input & output lengths to speed up '
                            'training (may reduce accuracy). This fixes all '
                            'input and output to have a maximum length. This '
                            'reduces the total amount '
-                           'of padding in the batches.')
+                           'of padding in the batches, default is %(default)s')
         agent.add_argument('-rnn', '--rnn-class', default='lstm',
                            choices=Seq2seq.RNN_OPTS.keys(),
-                           help='Choose between different types of RNNs.')
+                           help='Choose between different types of RNNs, default is %(default)s')
         agent.add_argument('-dec', '--decoder', default='same',
                            choices=['same', 'shared'],
                            help='Choose between different decoder modules. '
                                 'Default "same" uses same class as encoder, '
                                 'while "shared" also uses the same weights. '
                                 'Note that shared disabled some encoder '
-                                'options--in particular, bidirectionality.')
+                                'options--in particular, bidirectionality, default is %(default)s')
         agent.add_argument('-lt', '--lookuptable', default='unique',
                            choices=['unique', 'enc_dec', 'dec_out', 'all'],
                            help='The encoder, decoder, and output modules can '
@@ -126,16 +126,16 @@ class Seq2seqAgent(Agent):
                                 'and decoder. '
                                 'Dec_out shares decoder embedding and output '
                                 'weights. '
-                                'All shares all three weights.')
+                                'All shares all three weights, default is %(default)s')
         agent.add_argument('-opt', '--optimizer', default='sgd',
                            choices=Seq2seqAgent.OPTIM_OPTS.keys(),
                            help='Choose between pytorch optimizers. '
                                 'Any member of torch.optim is valid and will '
                                 'be used with default params except learning '
-                                'rate (as specified by -lr).')
+                                'rate (as specified by -lr), default is %(default)s')
         agent.add_argument('-mom', '--momentum', default=-1, type=float,
                            help='if applicable, momentum value for optimizer. '
-                                'if > 0, sgd uses nesterov momentum.')
+                                'if > 0, sgd uses nesterov momentum, default is %(default)s')
         agent.add_argument('-emb', '--embedding-type', default='random',
                            choices=['random', 'glove', 'glove-fixed',
                                     'fasttext', 'fasttext-fixed',
@@ -145,24 +145,25 @@ class Seq2seqAgent(Agent):
                                 'but can also preinitialize from Glove or '
                                 'Fasttext.'
                                 'Preinitialized embeddings can also be fixed '
-                                'so they are not updated during training.')
+                                'so they are not updated during training, default is %(default)s')
         agent.add_argument('-soft', '--numsoftmax', default=1, type=int,
                            help='default 1, if greater then uses mixture of '
-                                'softmax (see arxiv.org/abs/1711.03953).')
+                                'softmax (see arxiv.org/abs/1711.03953), default is %(default)s')
         agent.add_argument('-rf', '--report-freq', type=float, default=0.001,
-                           help='Report frequency of prediction during eval.')
+                           help='Report frequency of prediction during eval, default is %(default)s')
         agent.add_argument('-histr', '--history-replies',
                            default='label_else_model', type=str,
                            choices=['none', 'model', 'label',
                                     'label_else_model'],
-                           help='Keep replies in the history, or not.')
+                           help='Keep replies in the history, or not, default is %(default)s')
         agent.add_argument('-pt', '--person-tokens', type='bool', default=False,
-                           help='use special tokens before each speaker')
-        agent.add_argument('--beam-size', type=int, default=1, help='Beam size, if 1 then greedy search')
+                           help='use special tokens before each speaker, default is %(default)s')
+        agent.add_argument('--beam-size', type=int, default=1, help='Beam size, if 1 then greedy search, default is %(default)s')
         agent.add_argument('--beam-log-freq', type=float, default=0.0,
-                           help='The portion of beams to dump from minibatch into model_name.beam_dump folder')
-        agent.add_argument('--topk', type=int, default=1, help='Top k sampling from renormalized softmax in test/valid time, default 1 means simple greedy max output')
-        agent.add_argument('--softmax-layer-bias', type='bool', default=False, help='Put True if you want to include the bias in decoder.e2s layer')
+                           help='The portion of beams to dump from minibatch into model_name.beam_dump folder, default is %(default)s')
+        agent.add_argument('--topk', type=int, default=1, help='Top k sampling from renormalized softmax in test/valid time, default 1 means simple greedy max output, default is %(default)s')
+        agent.add_argument('--softmax-layer-bias', type='bool', default=False, help='Put True if you want to include the bias in decoder.e2s layer, default is %(default)s')
+        agent.add_argument('--dec-skip-connection', type='bool', default=False, help='Additive skip connection between decoder recurrent layers, default is %(default)s')
         Seq2seqAgent.dictionary_class().add_cmdline_args(argparser)
         return agent
 

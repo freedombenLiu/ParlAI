@@ -52,7 +52,8 @@ class Seq2seq(nn.Module):
             attn_time=opt.get('attention_time'),
             bidir_input=opt['bidirectional'],
             numsoftmax=opt.get('numsoftmax', 1),
-            softmax_layer_bias=opt.get('softmax_layer_bias', False))
+            softmax_layer_bias=opt.get('softmax_layer_bias', False),
+            skip_connection=opt.get('dec_skip_connection', False))
 
         shared_lt = (self.decoder.lt
                      if opt['lookuptable'] in ['enc_dec', 'all'] else None)
@@ -319,13 +320,55 @@ class Encoder(nn.Module):
 
         return encoder_output, hidden
 
+class LSTMwSkip(nn.Module):
+    # this class is intended to be used in Decoder of seq2seq agent, only uni-directional!
+
+    def __init__(self, rnn_class, emb_size, hidden_size, num_layers, dropout, batch_first=True):
+        super().__init__()
+        self.num_layers = num_layers
+        self.rnn_class = rnn_class
+        self.lstm_layers = nn.ModuleList([rnn_class(emb_size, hidden_size, 1, batch_first=True)] + [rnn_class(hidden_size, hidden_size, 1, batch_first=True)] * (num_layers-1))
+        self.dropout = dropout
+
+    def forward(self, x, h0):
+        # iterate over the layers and add skip additive connection between layers
+        # h0 is expected to have multilayer structure, so we need to unpack it
+        hidden, cell = None, None
+        if self.rnn_class == nn.LSTM:
+            hidden, cell = h0[0], h0[1]
+        else:
+            hidden = h0
+
+        new_hidden = []
+        
+        for i,l in enumerate(self.lstm_layers):
+            if self.rnn_class == nn.LSTM:
+                h = hidden[i].unsqueeze(0)
+                c = cell[i].unsqueeze(0)
+                hid = (h,c)
+            else:
+                h = hidden[i].unsqueeze(0)
+                hid = h
+            if i == 0:
+                x, _new_hidden = l(x, hid)
+            else:
+                _x = x
+                x, _new_hidden = l(x, hid)
+                x = x + _x
+            if i < self.num_layers-1:
+                x = F.dropout(x, p=self.dropout)
+            new_hidden.append(_new_hidden)
+
+        new_h = torch.cat([i[0] for i in new_hidden], 0)
+        new_c = torch.cat([i[1] for i in new_hidden], 0)
+        return x, (new_h, new_c)
 
 class Decoder(nn.Module):
     def __init__(self, num_features, padding_idx=0, rnn_class='lstm',
                  emb_size=128, hidden_size=128, num_layers=2, dropout=0.1,
                  bidir_input=False, share_output=True,
                  attn_type='none', attn_length=-1, attn_time='pre',
-                 sparse=False, numsoftmax=1, softmax_layer_bias=False):
+                 sparse=False, numsoftmax=1, softmax_layer_bias=False, skip_connection=False):
         super().__init__()
 
         if padding_idx != 0:
@@ -339,8 +382,11 @@ class Decoder(nn.Module):
 
         self.lt = nn.Embedding(num_features, emb_size, padding_idx=padding_idx,
                                sparse=sparse)
-        self.rnn = rnn_class(emb_size, hidden_size, num_layers,
-                             dropout=dropout, batch_first=True)
+        if skip_connection == False:
+            self.rnn = rnn_class(emb_size, hidden_size, num_layers,
+                                 dropout=dropout, batch_first=True)
+        else:
+            self.rnn = LSTMwSkip(rnn_class, emb_size, hidden_size, num_layers, dropout=dropout, batch_first=True)
 
         # rnn output to embedding
         if hidden_size != emb_size and numsoftmax == 1:
