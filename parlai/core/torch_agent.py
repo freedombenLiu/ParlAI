@@ -364,7 +364,7 @@ class TorchAgent(Agent):
 
 
 class Beam(object):
-    def __init__(self, beam_size, min_length=3, padding_token=0, bos_token=1, eos_token=2, min_n_best=3, cuda='cpu'):
+    def __init__(self, beam_size, min_length=3, padding_token=0, bos_token=1, eos_token=2, min_n_best=3, cuda='cpu', beam_block_hypos=None):
         """
         Generic beam class. It keeps information about beam_size hypothesis.
         :param beam_size: number of hypothesis in the beam
@@ -393,6 +393,7 @@ class Beam(object):
         self.eos_top_ts = None
         self.n_best_counter = 0
         self.min_n_best = min_n_best
+        self.beam_block_hypos = beam_block_hypos
 
     def get_output_from_current_step(self):
         return self.outputs[-1]
@@ -410,7 +411,29 @@ class Beam(object):
             #  we need to sum up hypo scores and current softmax scores before topk
             beam_scores = softmax_probs + self.scores.unsqueeze(1).expand_as(softmax_probs)  # [beam_size, voc_size]
             for i in range(self.outputs[-1].size(0)):
+                #  i is hypoid here
                 #  if previous output hypo token had eos - we penalize those word probs to never be chosen
+                if self.beam_block_hypos is not None:
+                    curhyp = ','.join(reversed([str(i.tokenid.item()) for i in self.get_partial_hyp_from_tail(len(self.outputs)-1,i)]))
+                    if curhyp.split(',')[-1] == curhyp.split(',')[-2] and curhyp.split(',')[-2] == curhyp.split(',')[-3]:
+                        beam_scores[i] = -1e20
+                        self.outputs[-1][i] = self.eos
+                        self.eos_top = True
+                        self.n_best_counter += 1
+                        continue
+                    
+                    splitted_curhyp_periods = curhyp[2:].split(',4,')
+                    splitted_curhyp_commas = curhyp[2:].split(',14,')
+                    splitted_curhyp_exclam = curhyp[2:].split(',20,')
+                    for block in self.beam_block_hypos:
+                        block_flag = False
+                        for p in splitted_curhyp_periods + splitted_curhyp_commas + splitted_curhyp_exclam:
+                            if p in block:
+                                block_flag = True
+                                break
+                        if block_flag is True:
+                            beam_scores[i] = -1e20
+
                 if self.outputs[-1][i] == self.eos:
                     beam_scores[i] = -1e20  # beam_scores[i] is voc_size array for i-th hypo
 
@@ -468,6 +491,18 @@ class Beam(object):
             endback = self.bookkeep[i - 1][endback]
 
         return hyp_idx
+
+    def get_partial_hyp_from_tail(self, ts, hypid):
+        hypothesis_tail = self.HypothesisTail(timestep=ts, hypid=torch.Tensor([hypid]).long(), score=self.all_scores[ts][hypid], tokenid=self.outputs[ts][hypid])
+        hyp_idx = []
+        endback = hypothesis_tail.hypid
+        for i in range(hypothesis_tail.timestep, -1, -1):
+            hyp_idx.append(self.HypothesisTail(timestep=i, hypid=endback, score=self.all_scores[i][endback],
+                                               tokenid=self.outputs[i][endback]))
+            endback = self.bookkeep[i - 1][endback]
+
+        return hyp_idx
+
 
     def get_pretty_hypothesis(self, list_of_hypotails):
         hypothesis = []
