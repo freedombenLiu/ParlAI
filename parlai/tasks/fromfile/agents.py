@@ -62,6 +62,8 @@ class ParlaiformatTeacher(ParlAIDialogTeacher):
                            help="Data file")
 
     def __init__(self, opt, shared=None):
+        if shared is not None:
+            print("trying to share!!")
         super().__init__(opt, shared)
         opt = copy.deepcopy(opt)
         if not opt.get('fromfile_datapath'):

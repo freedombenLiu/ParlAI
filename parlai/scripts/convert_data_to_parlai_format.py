@@ -7,6 +7,7 @@
 E.g.:
 `python convert_data_to_parlai_format.py -t babi:task1k:1 --outfile /tmp/dump `
 """
+# py parlai/scripts/convert_data_to_parlai_format.py -t internal:Reddit:redditPytorchData -n 1000 --ignore-fields "label_candidates,id" --max_hist_len 3
 
 from parlai.core.params import ParlaiParser
 from parlai.agents.repeat_label.repeat_label import RepeatLabelAgent
@@ -28,7 +29,21 @@ def dump_data(opt):
         world.parley()
         world.acts[0]['labels'] = world.acts[0].get(
             'labels', world.acts[0].pop('eval_labels', None))
-        txt = msg_to_str(world.acts[0], ignore_fields=ignorefields)
+        #import pdb; pdb.set_trace()
+        ##
+        t = world.acts[0].copy()
+        ss = t['text'].split('\n')
+        a = []
+        for s in ss:
+            if 'persona:' not in s:
+                a.append(s)
+        t['text'] = '\n'.join(a)
+        t['text'] = t['text'].replace('__START__', '')
+        t['text'] = t['text'].replace('__END__', '\n') 
+        if t['text'][-1] == '\n':
+            t['text'] = t['text'][:-1]
+        txt = msg_to_str(t, ignore_fields=ignorefields)
+        ##
         fw.write(txt + '\n')
         if world.acts[0].get('episode_done', False):
             fw.write('\n')
