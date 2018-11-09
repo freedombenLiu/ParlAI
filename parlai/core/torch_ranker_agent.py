@@ -309,26 +309,6 @@ class TorchRankerAgent(TorchAgent):
             m[k] = round_sigfigs(v, 4)
         return m
 
-    def _get_model_file(self, opt):
-        model_file = None
-
-        # first check load path in case we need to override paths
-        if opt.get('init_model') and os.path.isfile(opt['init_model']):
-            # check first for 'init_model' for loading model from file
-            model_file = opt['init_model']
-
-        if opt.get('model_file') and os.path.isfile(opt['model_file']):
-            # next check for 'model_file', this would override init_model
-            model_file = opt['model_file']
-
-        if model_file is not None:
-            # if we are loading a model, should load its dict too
-            if (os.path.isfile(model_file + '.dict') or
-                    opt['dict_file'] is None):
-                opt['dict_file'] = model_file + '.dict'
-
-        return model_file, opt
-
     def set_vocab_candidates(self, shared):
         """Load the tokens from the vocab as candidates
 
