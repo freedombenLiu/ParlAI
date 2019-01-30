@@ -38,7 +38,7 @@ except ImportError:
 Batch = namedtuple('Batch', [
     'text_vec', 'text_lengths', 'label_vec', 'label_lengths', 'labels',
     'valid_indices', 'candidates', 'candidate_vecs', 'image',
-    'memory_vecs', 'observations'
+    'memory_vecs', 'observations', 'context_vec', 'context_lengths',
 ])
 set_namedtuple_defaults(Batch, default=None)
 Batch.__doc__ = """
@@ -102,6 +102,15 @@ parent function to set up these fields as a base.
 .. py:attribute:: observations
 
     the original observations in the batched order
+
+.. py:attribute:: context_vec
+
+    bsz x seqlen tensor containing the parsed context data.
+
+.. py:attribute:: context_lengths
+
+    list of length bsz containing the lengths of the context in same order as
+    context_vec; necessary for pack_padded_sequence.
 """
 
 
@@ -222,6 +231,11 @@ class TorchAgent(Agent):
 
         # preprocessing arguments
         agent.add_argument(
+            '-ctx', '--parse-context', type='bool', default=False,
+            help='Whether to (True) parse context into a separate tensor '
+                 '(batch.context_vec) or (False) prepend context to the text '
+                 'field.')
+        agent.add_argument(
             '-rc', '--rank-candidates', type='bool', default=False,
             help='Whether the model should parse candidates for ranking.')
         agent.add_argument(
@@ -230,6 +244,9 @@ class TorchAgent(Agent):
         agent.add_argument(
             '-histsz', '--history-size', default=-1, type=int,
             help='Number of past dialog utterances to remember.')
+        agent.add_argument(
+            '-ctxsz', '--context-size', default=-1, type=int,
+            help='Number of past contexts to remember.')
         agent.add_argument(
             '-pt', '--person-tokens', type='bool', default=False,
             help='add person tokens to history. adds __p1__ in front of input '
@@ -309,8 +326,10 @@ class TorchAgent(Agent):
         self.batch_idx = shared and shared.get('batchindex') or 0
         # can remember as few as zero utterances if desired
         self.histsz = opt['history_size'] if opt['history_size'] >= 0 else None
+        self.ctxsz = opt['context_size'] if opt['context_size'] >= 0 else None
         # stores up to hist_utt past observations within current dialog
         self.history = deque(maxlen=self.histsz)
+        self.ctx_history = deque(maxlen=self.ctxsz)
         # truncate == 0 might give funny behavior
         self.truncate = opt['truncate'] if opt['truncate'] >= 0 else None
         self.rank_candidates = opt['rank_candidates']
@@ -435,9 +454,7 @@ class TorchAgent(Agent):
         return metrics
 
     def _is_lr_warming_up(self):
-        """
-        Checks if we're warming up the learning rate.
-        """
+        """Checks if we're warming up the learning rate."""
         return (
             self.warmup_scheduler is not None and
             self._number_training_updates <= self.opt['warmup_updates']
@@ -650,7 +667,8 @@ class TorchAgent(Agent):
             # we don't add start and end to the input
             if split_lines:
                 # if split_lines set, we put most lines into memory field
-                obs['memory_vecs'] = []
+                # if there are already memories, add these to them
+                obs['memory_vecs'] = obs.get('memory_vecs', [])
                 for line in obs['text'].split('\n'):
                     obs['memory_vecs'].append(
                         self._vectorize_text(line, truncate=truncate))
@@ -659,6 +677,36 @@ class TorchAgent(Agent):
             else:
                 obs['text_vec'] = self._vectorize_text(obs['text'],
                                                        truncate=truncate)
+        return obs
+
+    def _set_context_vec(self, obs, truncate, split_lines):
+        """Sets the 'context_vec' field in the observation.
+
+        Useful to override to change vectorization behavior.
+        """
+
+        if 'context_vec' in obs or 'memory_vecs' in obs:
+            if split_lines and 'memory_vecs' in obs:
+                obs['memory_vecs'] = [self._check_truncate(m, truncate)
+                                      for m in obs['memory_vecs']]
+            else:
+                # check truncation of pre-computed vectors
+                obs['context_vec'] = self._check_truncate(obs['context_vec'],
+                                                          truncate)
+        elif 'context' in obs:
+            # convert 'context' into tensor of dictionary indices
+            # we don't add start and end to the context
+            if split_lines:
+                # if split_lines set, we put most lines into memory field
+                # if there are already memories, add these to them
+                obs['memory_vecs'] = obs.get('memory_vecs', [])
+                for line in obs['context'].split('\n'):
+                    obs['memory_vecs'].append(
+                        self._vectorize_text(line, truncate=truncate))
+            else:
+                obs['context_vec'] = self._vectorize_text(obs['context'],
+                                                      truncate=truncate)
+
         return obs
 
     def _set_label_vec(self, obs, add_start, add_end, truncate):
@@ -736,6 +784,8 @@ class TorchAgent(Agent):
         :return: the input observation, with 'text_vec', 'label_vec', and
             'cands_vec' fields added.
         """
+        # set context first: if split_lines, context memories will be above text
+        self._set_context_vec(obs, truncate, split_lines)
         self._set_text_vec(obs, truncate, split_lines)
         self._set_label_vec(obs, add_start, add_end, truncate)
         self._set_label_cands_vec(obs, add_start, add_end, truncate)
@@ -785,9 +835,19 @@ class TorchAgent(Agent):
             _xs = [ex.get('text_vec', self.EMPTY) for ex in exs]
             xs, x_lens = padded_tensor(_xs, self.NULL_IDX, self.use_cuda)
             if sort:
-                sort = False  # now we won't sort on labels
+                sort = False  # now we won't resort on a different vector
                 xs, x_lens, valid_inds, exs = argsort(
                     x_lens, xs, x_lens, valid_inds, exs, descending=True
+                )
+        # CONTEXT
+        ctxs, ctx_lens = None, None
+        if any('context_vec' in ex for ex in exs):
+            _ctxs = [ex.get('context_vec', self.EMPTY) for ex in exs]
+            ctxs, ctx_lens = padded_tensor(_ctxs, self.NULL_IDX, self.use_cuda)
+            if sort:
+                sort = False  # now we won't resort on a different vector
+                ctxs, ctx_lens, valid_inds, exs = argsort(
+                    ctx_lens, ctxs, ctx_lens, valid_inds, exs, descending=True
                 )
 
         # LABELS
@@ -830,7 +890,7 @@ class TorchAgent(Agent):
                      label_lengths=y_lens, labels=labels,
                      valid_indices=valid_inds, candidates=cands,
                      candidate_vecs=cand_vecs, image=imgs, memory_vecs=mems,
-                     observations=exs)
+                     observations=exs, context_vec=ctxs, context_lengths=ctx_lens)
 
     def match_batch(self, batch_reply, valid_inds, output=None):
         """Match sub-batch of predictions to the original batch indices.
@@ -914,11 +974,17 @@ class TorchAgent(Agent):
             # add text to history
             self.history.append(obs['text'])
 
+        if 'context' in obs:
+            self.ctx_history.append(obs['context'])
+
         if len(self.history) > 0:
             obs['text'] = '\n'.join(self.history)
+        if len(self.ctx_history) > 0:
+            obs['context'] = '\n'.join(self.ctx_history)
         if obs.get('episode_done', True):
             # end of this episode, clear the history
             self.history.clear()
+            self.ctx_history.clear()
         return obs
 
     def last_reply(self, use_label=True):
@@ -993,10 +1059,16 @@ class TorchAgent(Agent):
 
         This includes remembering the past history of the conversation.
         """
+        obs = observation.copy()
+
+        if 'context' in obs and not self.opt.get('parse_context', False):
+            # default to merging context into text, not parsing it separately
+            obs['text'] = obs.pop('context') + '\n' + obs['text']
+
         reply = self.last_reply(
             use_label=(self.opt.get('use_reply', 'label') == 'label'))
         self.observation = self.get_dialog_history(
-            observation, reply=reply, add_person_tokens=self.add_person_tokens,
+            obs, reply=reply, add_person_tokens=self.add_person_tokens,
             add_p1_after_newln=self.opt.get('add_p1_after_newln', False))
         return self.vectorize(self.observation, truncate=self.truncate)
 
@@ -1044,6 +1116,7 @@ class TorchAgent(Agent):
         """Clear internal states."""
         self.observation = {}
         self.history.clear()
+        self.ctx_history.clear()
         self.replies.clear()
         self.reset_metrics()
 
@@ -1125,7 +1198,6 @@ class TorchAgent(Agent):
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(), self.opt['gradient_clip']
             )
-
         self.optimizer.step()
 
     def zero_grad(self):
