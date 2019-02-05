@@ -17,6 +17,7 @@
 from parlai.core.teachers import DialogTeacher
 from .build import build
 
+import numpy as np
 import json
 import os
 
@@ -36,7 +37,6 @@ class FullTeacher(DialogTeacher):
         super().__init__(opt, shared)
 
     def setup_data(self, path):
-        print('loading: ' + path)
         for subdir in os.listdir(path):
             if subdir == 'README.md':
                 continue
@@ -72,7 +72,6 @@ class FullTeacher(DialogTeacher):
 
         return instructions
 
-
 class SummaryTeacher(DialogTeacher):
     """Reads Wikipedia pages one at a time, only uses summaries
     """
@@ -87,7 +86,6 @@ class SummaryTeacher(DialogTeacher):
         super().__init__(opt, shared)
 
     def setup_data(self, path):
-        print('loading: ' + path)
         with open(path) as wf:
             for article_json in wf:
                 article = json.loads(article_json)
@@ -101,3 +99,45 @@ class SummaryTeacher(DialogTeacher):
 
 class DefaultTeacher(SummaryTeacher):
     pass
+
+
+class FakeTeacher(FullTeacher):
+    def __init__(self, opt, shared=None):
+        self.key_value = True
+        import os
+        import spacy
+        os.environ['OPENBLAS_NUM_THREADS'] = '1'
+        os.environ['MKL_NUM_THREADS'] = '1'
+        if shared is None:
+            self.nlp = spacy.load('en', disable=['parser', 'tagger', 'ner', 'textcat'])
+            self.nlp.add_pipe(self.nlp.create_pipe('sentencizer'))
+        else:
+            self.nlp = shared['nlp']
+
+    def share(self):
+        s = super().share()
+        s['nlp'] = self.nlp
+        return s
+
+    def setup_data(self):
+        path = '/private/home/roller/working/parlai/data/wikipedia/full/wiki_full_extracted'
+        for (title, text), _ in super().setup_data(path):
+            text = text[0]
+            lines = (line for line in text.split("\n") if line)
+            current_ep = []
+            processed = self.nlp.pipe(lines, batch_size=128)
+            for doc in processed:
+                for i, sent in enumerate(doc.sents):
+                    current_ep.append(sent.text)
+                    if len(current_ep) == 6:
+                        yield current_ep
+                        current_ep = []
+
+def main():
+    ft = FakeTeacher({})
+    for i, ep in enumerate(ft.setup_data()):
+        print('<BREAK>'.join(ep))
+
+
+if __name__ == '__main__':
+    main()
