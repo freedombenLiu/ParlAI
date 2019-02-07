@@ -252,6 +252,10 @@ class TorchGeneratorAgent(TorchAgent):
                                 'the beam search')
         agent.add_argument('--beam-block-ngram', type=int, default=0, hidden=True,
                            help='Block all repeating ngrams up to history length n-1')
+        agent.add_argument('--beam-num-iterations', type=int, default=1, hidden=True,
+                           help='Number of iterations for iterbeam')
+        agent.add_argument('--beam-dist-threshold', type=int, default=1, hidden=True,
+                           help='Distance threshold for iterbeam')
         agent.add_argument('--skip-generation', type='bool', default=False, hidden=True,
                            help='Skip beam search. Useful for speeding up training, '
                                 'if perplexity is the validation metric.')
@@ -284,6 +288,8 @@ class TorchGeneratorAgent(TorchAgent):
         self.beam_min_n_best = opt.get('beam_min_n_best', 3)
         self.beam_min_length = opt.get('beam_min_length', 3)
         self.beam_block_ngram = opt.get('beam_block_ngram', 0)
+        self.beam_num_iterations = opt.get('beam_num_iterations', 1)
+        self.beam_dist_threshold = opt.get('beam_dist_threshold', 1)
         self.skip_generation = opt.get('skip_generation', False)
 
         if shared:
@@ -509,14 +515,30 @@ class TorchGeneratorAgent(TorchAgent):
                 self.model,
                 batch,
                 self.beam_size,
+                self.beam_num_iterations,
                 start=self.START_IDX,
                 end=self.END_IDX,
                 pad=self.NULL_IDX,
                 min_length=self.beam_min_length,
                 min_n_best=self.beam_min_n_best,
-                block_ngram=self.beam_block_ngram
+                block_ngram=self.beam_block_ngram,
+                iterbeam_distance=self.beam_dist_threshold
             )
             beam_preds_scores, _, beams = out
+
+            if self.beam_num_iterations > 1:
+                beam_preds_scores_persample = {i:[] for i in range(bsz)}
+                for iter_beam_preds_scores in beam_preds_scores:
+                    for batch_idx in range(bsz):
+                        beam_preds_scores_persample[batch_idx].append(iter_beam_preds_scores[batch_idx])
+                best_preds_scores = []
+                for i, iters in beam_preds_scores_persample.items():
+                    best_tuple = sorted(iters, key=lambda k: k[1])[-1]
+                    best_preds_scores.append(best_tuple)
+                beam_preds_scores = best_preds_scores
+            else:
+                beam_preds_scores = beam_preds_scores[0]
+
             preds, scores = zip(*beam_preds_scores)
 
             if self.beam_dot_log is True:
@@ -563,8 +585,10 @@ class TorchGeneratorAgent(TorchAgent):
         text = [self._v2t(p) for p in preds]
         return Output(text, cand_choices)
 
-    def beam_search(self, model, batch, beam_size, start=1, end=2,
-                    pad=0, min_length=3, min_n_best=5, max_ts=40, block_ngram=0):
+
+    def beam_search(self, model, batch, beam_size, beam_num_iterations , start=1, end=2,
+                    pad=0, min_length=3, min_n_best=5, max_ts=40, block_ngram=0,
+                    iterbeam_distance=1):
         """Beam search given the model and Batch
 
 
@@ -595,60 +619,73 @@ class TorchGeneratorAgent(TorchAgent):
         dev = batch.text_vec.device
 
         bsz = len(batch.text_lengths)
-        beams = [
-            Beam(beam_size, min_length=min_length, padding_token=pad,
-                 bos_token=start, eos_token=end, min_n_best=min_n_best,
-                 cuda=dev, block_ngram=block_ngram)
-            for i in range(bsz)
-        ]
+        
+        beams = []
+        for iter_idx in range(beam_num_iterations):
+            beams.append([
+                Beam(beam_size, min_length=min_length, padding_token=pad,
+                     bos_token=start, eos_token=end, min_n_best=min_n_best,
+                     cuda=dev, block_ngram=block_ngram, dist_threshold=self.beam_dist_threshold)
+                for i in range(bsz)
+            ])
 
-        # repeat encoder outputs and decoder inputs
-        decoder_input = torch.LongTensor([start]).expand(bsz * beam_size, 1).to(dev)
 
         inds = torch.arange(bsz).to(dev).unsqueeze(1).repeat(1, beam_size).view(-1)
         encoder_states = model.reorder_encoder_states(encoder_states, inds)
-        incr_state = None
 
-        for ts in range(max_ts):
-            # exit early if needed
-            if all((b.done() for b in beams)):
-                break
+        iterbeam_hypotheses_stack = {i:[] for i in range(bsz)}
 
-            score, incr_state = model.decoder(decoder_input, encoder_states, incr_state)
-            # only need the final hidden state to make the word prediction
-            score = score[:, -1:, :]
-            score = model.output(score)
-            # score contains softmax scores for bsz * beam_size samples
-            score = score.view(bsz, beam_size, -1)
-            score = F.log_softmax(score, dim=-1)
-            for i, b in enumerate(beams):
-                if not b.done():
-                    b.advance(score[i])
-            incr_state_inds = torch.cat(
-                [beam_size * i +
-                    b.get_backtrack_from_current_step() for i, b in enumerate(beams)])
-            incr_state = model.reorder_decoder_incremental_state(
-                incr_state, incr_state_inds
-            )
-            decoder_input = torch.index_select(decoder_input, 0, incr_state_inds)
-            selection = torch.cat(
-                [b.get_output_from_current_step() for b in beams]).unsqueeze(-1)
-            decoder_input = torch.cat([decoder_input, selection], dim=-1)
+        for iter_idx in range(beam_num_iterations):
+            #import ipdb; ipdb.set_trace()
+            incr_state = None
+            # repeat encoder outputs and decoder inputs
+            decoder_input = torch.LongTensor([start]).expand(bsz * beam_size, 1).to(dev)
+            for ts in range(max_ts):
+                # exit early if needed
+                if all((b.done() for b in beams[iter_idx])):
+                    break
 
-        for b in beams:
-            b.check_finished()
+                score, incr_state = model.decoder(decoder_input, encoder_states, incr_state)
+                # only need the final hidden state to make the word prediction
+                score = score[:, -1:, :]
+                score = model.output(score)
+                # score contains softmax scores for bsz * beam_size samples
+                score = score.view(bsz, beam_size, -1)
+                score = F.log_softmax(score, dim=-1)
+                for i, b in enumerate(beams[iter_idx]):
+                    if not b.done():
+                        b.advance(score[i], iterbeam_hypotheses_stack[i])
+                incr_state_inds = torch.cat(
+                    [beam_size * i +
+                        b.get_backtrack_from_current_step() for i, b in enumerate(beams[iter_idx])])
+                incr_state = model.reorder_decoder_incremental_state(
+                    incr_state, incr_state_inds
+                )
+                decoder_input = torch.index_select(decoder_input, 0, incr_state_inds)
+                selection = torch.cat(
+                    [b.get_output_from_current_step() for b in beams[iter_idx]]).unsqueeze(-1)
+                decoder_input = torch.cat([decoder_input, selection], dim=-1)
+            for i, b in enumerate(beams[iter_idx]):
+                iterbeam_hypotheses_stack[i].extend(b.partial_hyps)
 
-        beam_preds_scores = [list(b.get_top_hyp()) for b in beams]
-        for pair in beam_preds_scores:
-            pair[0] = Beam.get_pretty_hypothesis(pair[0])
+        for iter_idx in range(beam_num_iterations):
+            for b in beams[iter_idx]:
+                b.check_finished()
 
-        n_best_beams = [b.get_rescored_finished(n_best=min_n_best) for b in beams]
+        beam_preds_scores = []
+        for iter_idx in range(self.beam_num_iterations):
+            beam_preds_scores.append([list(b.get_top_hyp()) for b in beams[iter_idx]])
+            for pair in beam_preds_scores[-1]:
+                pair[0] = Beam.get_pretty_hypothesis(pair[0])
+
+        #  this is only for the first iteration
+        n_best_beams = [b.get_rescored_finished(n_best=min_n_best) for b in beams[0]]
         n_best_beam_preds_scores = []
         for i, beamhyp in enumerate(n_best_beams):
             this_beam = []
             for hyp in beamhyp:
-                pred = beams[i].get_pretty_hypothesis(
-                    beams[i].get_hyp_from_finished(hyp))
+                pred = beams[0][i].get_pretty_hypothesis(
+                    beams[0][i].get_hyp_from_finished(hyp))
                 score = hyp.score
                 this_beam.append((pred, score))
             n_best_beam_preds_scores.append(this_beam)
@@ -735,7 +772,7 @@ class Beam(object):
     """Generic beam class. It keeps information about beam_size hypothesis."""
 
     def __init__(self, beam_size, min_length=3, padding_token=0, bos_token=1,
-                 eos_token=2, min_n_best=3, cuda='cpu', block_ngram=0):
+                 eos_token=2, min_n_best=3, cuda='cpu', block_ngram=0, dist_threshold=1):
         """Instantiate Beam object.
 
         :param beam_size: number of hypothesis in the beam
@@ -773,6 +810,7 @@ class Beam(object):
         self.min_n_best = min_n_best
         self.block_ngram = block_ngram
         self.partial_hyps = [[self.bos] for i in range(beam_size)]
+        self.dist_threshold = dist_threshold
 
     @staticmethod
     def find_ngrams(input_list, n):
@@ -787,7 +825,10 @@ class Beam(object):
         """Get the backtrack at the current step."""
         return self.bookkeep[-1]
 
-    def advance(self, softmax_probs):
+    def get_hamming_dist(self, l1, l2):
+        return sum(a != b for a, b in zip(l1, l2))
+
+    def advance(self, softmax_probs, hypotheses_stack):
         """Advance the beam one step."""
         voc_size = softmax_probs.size(-1)
         current_length = len(self.all_scores) - 1
@@ -816,6 +857,18 @@ class Beam(object):
                     if any(v > 1 for k, v in counted_ngrams.items()):
                         # block this hypothesis hard
                         beam_scores[i] = -NEAR_INF
+                
+                if len(hypotheses_stack) > 0:
+                    current_hypo = self.partial_hyps[i]
+                    current_hypo_len = len(current_hypo)
+                    for prevhyp in hypotheses_stack:
+                        if len(prevhyp) < current_hypo_len + 1:
+                            continue
+                        dist = self.get_hamming_dist(prevhyp[:current_hypo_len], current_hypo)
+                        if dist < self.dist_threshold:
+                            last_token = prevhyp[current_hypo_len]
+                            beam_scores[i][last_token] = -NEAR_INF
+                            break
 
                 #  if previous output hypo token had eos
                 # we penalize those word probs to never be chosen
