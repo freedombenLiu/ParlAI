@@ -281,6 +281,7 @@ class Metrics(object):
                         self.metrics[k] / max(1, self.metrics[k + '_cnt']),
                         4
                     )
+        print(self.metrics)
         return m
 
     def clear(self):

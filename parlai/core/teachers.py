@@ -370,6 +370,7 @@ class FixedDialogTeacher(Teacher):
             self.lastYs[self.batchindex] = None
 
         if hasattr(self, 'lastY') and self.lastY is not None:
+            #import pdb; pdb.set_trace()
             self.metrics.update(observation, self.lastY)
             self.lastY = None
         return observation
